@@ -50,7 +50,7 @@ Both `greek-data-monitor` and the shorthand alias `gdm` are registered CLI comma
 
 ## Usage
 
-### 1. Run Quality Monitor
+### 1. Run Quality Monitor via CLI
 
 Fetch the series, run quality checks, compare against previous snapshots for revisions, record the run in SQLite, and print a formatted summary:
 
@@ -59,6 +59,24 @@ greek-data-monitor run
 # or using the shorthand:
 gdm run
 ```
+
+### 2. Launch Interactive Web Dashboard
+
+To inspect quality metrics, interactive Plotly charts, and historical snapshots in your browser:
+
+```bash
+streamlit run app.py
+```
+
+The web dashboard is available at:
+**[http://localhost:8501](http://localhost:8501)**
+
+Features included in the web interface:
+- **Interactive KPI Cards:** Current GDP, latest YoY growth, error/warning count, and quality status.
+- **Visual Analytics:** Interactive GDP time series curve (with provisional flags) and YoY growth vs. warning threshold band chart.
+- **On-Demand Runs:** Click *'Fetch & Run Quality Check'* to execute real-time ingestion from Eurostat.
+- **Snapshot Audit Viewer:** Compare historical quality runs and inspect rule findings.
+- **Data Export:** Filter raw observations and export snapshots as CSV.
 
 #### Command Options
 
