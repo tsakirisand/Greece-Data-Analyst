@@ -242,3 +242,183 @@ def filter_and_sort_observations(
         return v
 
     return sorted(filtered, key=sort_key, reverse=not ascending)
+
+
+def calculate_quality_scorecard(
+    observations: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    min_year: int = 1995,
+) -> dict[str, Any]:
+    """Calculate ISO 25012 / DAMA data quality dimension scores and composite grade."""
+    total_obs = len(observations)
+    if total_obs == 0:
+        return {
+            "overall_score": 0.0,
+            "grade": "F",
+            "completeness_score": 0.0,
+            "validity_score": 0.0,
+            "uniqueness_score": 0.0,
+            "plausibility_score": 0.0,
+            "error_count": 0,
+            "warning_count": 0,
+        }
+
+    # 1. Completeness: active series coverage (>= min_year)
+    active_obs = [o for o in observations if int(o["period"]) >= min_year]
+    if active_obs:
+        numeric_active = sum(1 for o in active_obs if o.get("value") is not None)
+        completeness = round((numeric_active / len(active_obs)) * 100.0, 1)
+    else:
+        completeness = 100.0
+
+    # 2. Validity & Uniqueness penalties based on error findings
+    invalid_periods = sum(1 for f in findings if f.get("rule") == "valid_period")
+    validity = max(0.0, 100.0 - (invalid_periods * 30.0))
+
+    duplicate_periods = sum(1 for f in findings if f.get("rule") == "unique_period")
+    uniqueness = max(0.0, 100.0 - (duplicate_periods * 30.0))
+
+    # 3. Plausibility / Volatility stability
+    warn_count = sum(1 for f in findings if f.get("severity") == "WARN")
+    plausibility = max(0.0, 100.0 - (warn_count * 15.0))
+
+    err_count = sum(1 for f in findings if f.get("severity") == "ERROR")
+
+    # Composite Score
+    composite = round(
+        (0.35 * completeness) + (0.25 * validity) + (0.25 * uniqueness) + (0.15 * plausibility),
+        1,
+    )
+    if err_count > 0:
+        composite = min(composite, 65.0)  # Cap if critical errors exist
+
+    if composite >= 95.0:
+        grade = "A+"
+    elif composite >= 90.0:
+        grade = "A"
+    elif composite >= 80.0:
+        grade = "B"
+    elif composite >= 70.0:
+        grade = "C"
+    else:
+        grade = "F"
+
+    return {
+        "overall_score": composite,
+        "grade": grade,
+        "completeness_score": completeness,
+        "validity_score": validity,
+        "uniqueness_score": uniqueness,
+        "plausibility_score": plausibility,
+        "error_count": err_count,
+        "warning_count": warn_count,
+        "active_period_count": len(active_obs),
+    }
+
+
+def get_greek_economic_milestones() -> list[dict[str, Any]]:
+    """Key macroeconomic and historical milestones for overlaying on Greece's GDP curve."""
+    return [
+        {"year": 2001, "label": "Eurozone Entry", "color": "#10b981", "desc": "Greece formally joins the European Economic and Monetary Union."},
+        {"year": 2009, "label": "Debt Crisis Onset", "color": "#ef4444", "desc": "Deficit revisions trigger sovereign debt crisis."},
+        {"year": 2012, "label": "PSI Debt Restructuring", "color": "#f59e0b", "desc": "Private sector bond haircut and major restructuring."},
+        {"year": 2015, "label": "Capital Controls", "color": "#f97316", "desc": "Referendum, capital restrictions, and third economic program."},
+        {"year": 2020, "label": "COVID-19 Shock", "color": "#dc2626", "desc": "Global pandemic lockdowns contraction."},
+        {"year": 2023, "label": "Investment Grade", "color": "#06b6d4", "desc": "Credit rating agencies restore Greece to investment grade."},
+    ]
+
+
+def calculate_statistical_anomalies(
+    df_numeric: Any,  # pd.DataFrame
+    z_threshold: float = 1.75,
+) -> dict[str, Any]:
+    """Compute rolling growth metrics, standard deviations, and Z-score anomalies."""
+    if df_numeric is None or len(df_numeric) < 3 or "yoy_change_pct" not in df_numeric.columns:
+        return {"mean_growth": 0.0, "std_growth": 0.0, "anomalies": []}
+
+    valid_changes = df_numeric["yoy_change_pct"].dropna()
+    mean_val = float(valid_changes.mean())
+    std_val = float(valid_changes.std()) if len(valid_changes) > 1 else 1.0
+
+    anomalies: list[dict[str, Any]] = []
+    for _, row in df_numeric.dropna(subset=["yoy_change_pct"]).iterrows():
+        yoy = float(row["yoy_change_pct"])
+        z_score = (yoy - mean_val) / std_val if std_val > 0 else 0.0
+        if abs(z_score) >= z_threshold:
+            anomalies.append(
+                {
+                    "period": int(row["period"]),
+                    "value": float(row["value"]),
+                    "yoy_change_pct": round(yoy, 2),
+                    "z_score": round(z_score, 2),
+                    "direction": "Surge" if z_score > 0 else "Contraction",
+                }
+            )
+
+    return {
+        "mean_growth": round(mean_val, 2),
+        "std_growth": round(std_val, 2),
+        "anomalies": sorted(anomalies, key=lambda a: a["period"]),
+    }
+
+
+def generate_markdown_audit_report(
+    run_dict: dict[str, Any],
+    findings: list[dict[str, Any]],
+    scorecard: dict[str, Any],
+    series_name: str,
+) -> str:
+    """Generate a downloadable executive data quality audit report in Markdown format."""
+    run_id = run_dict.get("id", "N/A")
+    checked_at = run_dict.get("checked_at", "")[:19].replace("T", " ")
+    status = run_dict.get("status", "PASS")
+    obs_count = run_dict.get("observation_count", 0)
+
+    report = f"""# Official Data Quality Audit Report: Greece Public Statistics
+
+**Series:** {series_name}  
+**Audit Run ID:** #{run_id}  
+**Audit Timestamp:** {checked_at} UTC  
+**Overall Surveillance Status:** {status}  
+**Data Quality Score:** {scorecard.get('overall_score', 0)}/100 (Grade: {scorecard.get('grade', 'N/A')})  
+
+---
+
+## 1. Executive Summary
+This audit report was automatically compiled by the Greek Public Data Quality Monitor. The monitored indicator has been evaluated against ISO 25012 and DAMA statistical quality dimensions.
+
+- **Total Observations Analyzed:** {obs_count}
+- **Active Coverage Periods (≥ 1995):** {scorecard.get('active_period_count', 0)}
+- **Errors Detected:** {scorecard.get('error_count', 0)}
+- **Review Warnings:** {scorecard.get('warning_count', 0)}
+
+---
+
+## 2. Data Quality Dimensions Scorecard
+| Quality Dimension | Score | Assessment |
+|---|---|---|
+| **Completeness** | {scorecard.get('completeness_score', 0)}% | Active series periods containing valid numeric observations |
+| **Period Validity** | {scorecard.get('validity_score', 0)}% | Calendar year conformity (1900–2100) |
+| **Uniqueness** | {scorecard.get('uniqueness_score', 0)}% | Absence of duplicate temporal observations |
+| **Plausibility & Volatility** | {scorecard.get('plausibility_score', 0)}% | Stability within expected annual growth bounds |
+
+---
+
+## 3. Findings Audit Log
+| Severity | Rule | Period | Finding Description |
+|---|---|---|---|
+"""
+    for f in findings:
+        p_str = str(f.get("period")) if f.get("period") is not None else "All"
+        report += f"| {f.get('severity')} | `{f.get('rule')}` | {p_str} | {f.get('message')} |\n"
+
+    report += """
+---
+
+## 4. Methodology & Disclaimer
+- **Data Source:** Eurostat Dissemination API (`nama_10_gdp`).
+- **Heuristic Boundaries:** Percentage changes are review heuristics, not proof that official statistics are inaccurate. Macroeconomic shocks and statistical revisions legitimately alter historical series.
+- **Licensing:** Free reuse subject to Eurostat open data reuse policy.
+"""
+    return report
+

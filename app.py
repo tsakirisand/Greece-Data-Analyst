@@ -7,12 +7,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from greek_data_monitor.config import DEFAULT_SERIES, Settings
+from greek_data_monitor.config import AVAILABLE_SERIES, DEFAULT_SERIES, Settings
 from greek_data_monitor.dashboard_service import (
+    calculate_quality_scorecard,
+    calculate_statistical_anomalies,
     compare_run_snapshots,
     filter_and_sort_observations,
     format_gdp_value,
+    generate_markdown_audit_report,
     get_flag_descriptions,
+    get_greek_economic_milestones,
     get_quality_rule_descriptions,
 )
 from greek_data_monitor.ingestion import IngestionError, fetch_eurostat_series
@@ -31,7 +35,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom Accessible CSS styling
+# Custom Accessible Dark-Themed CSS styling
 st.markdown(
     """
     <style>
@@ -113,6 +117,13 @@ st.markdown(
         border-radius: 4px;
         font-size: 0.85rem;
     }
+    .scorecard-box {
+        background-color: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 0.75rem;
+        padding: 1.2rem;
+        margin-bottom: 1.2rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -141,6 +152,16 @@ page = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
+# Feature: Multi-Series Selector
+st.sidebar.markdown("### 📊 Monitored Series")
+selected_series_name = st.sidebar.selectbox(
+    "Active Indicator",
+    options=list(AVAILABLE_SERIES.keys()),
+    index=0,
+    help="Select which official Eurostat indicator for Greece to monitor and validate.",
+)
+active_series = AVAILABLE_SERIES[selected_series_name]
+
 # Settings & Thresholds
 with st.sidebar.expander("⚙️ Monitor Settings", expanded=False):
     db_url = st.text_input("Database URL", value=settings.database_url)
@@ -163,10 +184,10 @@ with st.sidebar.expander("⚙️ Monitor Settings", expanded=False):
 # Manual On-Demand Ingestion Trigger
 st.sidebar.markdown("### Data Refresh")
 if st.sidebar.button("🚀 Fetch & Run Quality Check", type="primary", use_container_width=True):
-    with st.spinner("Connecting to Eurostat API, evaluating quality rules, and persisting snapshot..."):
+    with st.spinner(f"Connecting to Eurostat API for {active_series.dimensions.get('unit')}..."):
         try:
-            previous_obs = get_latest_observations(db_url, DEFAULT_SERIES.series_id)
-            fetched_obs = fetch_eurostat_series(DEFAULT_SERIES, timeout=settings.request_timeout_seconds)
+            previous_obs = get_latest_observations(db_url, active_series.series_id)
+            fetched_obs = fetch_eurostat_series(active_series, timeout=settings.request_timeout_seconds)
             findings = inspect(
                 fetched_obs,
                 threshold_pct=yoy_threshold,
@@ -177,21 +198,23 @@ if st.sidebar.button("🚀 Fetch & Run Quality Check", type="primary", use_conta
                 database_url=db_url,
                 observations=fetched_obs,
                 findings=findings,
-                series_id=DEFAULT_SERIES.series_id,
+                series_id=active_series.series_id,
             )
-            st.sidebar.success(f"Run #{new_run_id} successfully executed and saved!")
+            st.sidebar.success(f"Run #{new_run_id} ({active_series.unit}) executed and recorded!")
             st.rerun()
         except IngestionError as exc:
             st.sidebar.error(f"Ingestion failed: {exc}")
         except Exception as exc:
             st.sidebar.error(f"Unexpected error: {exc}")
 
-# Load Run History from Database
-runs = list_runs(db_url, limit=30)
+# Load Run History for Active Series
+runs = list_runs(db_url, limit=30, series_id=active_series.series_id)
 
 if not runs:
+    # If no runs for this series, check if any run exists at all or offer to fetch
     st.markdown('<div class="brand-title">🇬🇷 Greek Public Data Quality Monitor</div>', unsafe_allow_html=True)
-    st.warning("No quality runs found in database. Click **'Fetch & Run Quality Check'** in the sidebar to perform your first live monitoring run.")
+    st.warning(f"No quality runs found in database for **{selected_series_name}**.")
+    st.info("Click **'Fetch & Run Quality Check'** in the sidebar to perform the first live monitoring run for this indicator.")
     st.stop()
 
 # Snapshot Selector for Inspection
@@ -214,7 +237,7 @@ current_run = current_run_data["run"]
 observations = current_run_data["observations"]
 findings = current_run_data["findings"]
 
-# Identify previous run if exists
+# Identify previous run if exists for this series
 previous_run_id: int | None = None
 for r in runs:
     if r["id"] < selected_run_id:
@@ -232,6 +255,9 @@ if not df_obs.empty and "value" in df_obs.columns:
     df_numeric["yoy_change_pct"] = df_numeric["value"].pct_change() * 100.0
 else:
     df_numeric = pd.DataFrame()
+
+# Calculate Quality Scorecard
+scorecard = calculate_quality_scorecard(observations, findings, min_year=int(min_year))
 
 
 def render_status_badge(status: str) -> str:
@@ -251,22 +277,22 @@ def render_status_badge(status: str) -> str:
 if page == "📌 Overview":
     st.markdown('<div class="brand-title">🇬🇷 Greek Public Data Quality Monitor</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="brand-subtitle">Real-time surveillance, historical revision auditing, and statistical integrity checks for Greece\'s annual GDP.</div>',
+        '<div class="brand-subtitle">Real-time surveillance, historical revision auditing, and statistical integrity checks for Greece\'s annual statistics.</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
         f"""
         <div class="callout-box">
-            <b>Series Being Monitored:</b> Greece Annual Gross Domestic Product (GDP at market prices) • 
-            <b>Eurostat Code:</b> <code>nama_10_gdp</code> • <b>Geography:</b> Greece (<code>EL</code>) • 
-            <b>Unit:</b> Current prices, million euro (<code>CP_MEUR</code>) • <b>Frequency:</b> Annual (<code>A</code>)
+            <b>Series Monitored:</b> {active_series.description} • 
+            <b>Eurostat Code:</b> <code>{active_series.dataset}</code> • <b>Geography:</b> Greece (<code>{active_series.dimensions.get('geo')}</code>) • 
+            <b>Unit:</b> <code>{active_series.unit}</code> • <b>Frequency:</b> Annual (<code>A</code>)
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Top KPI summary cards
+    # Top KPI summary cards (Dark, Equal-Height)
     k1, k2, k3, k4 = st.columns(4)
 
     with k1:
@@ -299,7 +325,7 @@ if page == "📌 Overview":
             st.markdown(
                 f"""
                 <div class="card-kpi">
-                    <div class="card-kpi-title">Latest GDP ({latest_yr})</div>
+                    <div class="card-kpi-title">Latest Value ({latest_yr})</div>
                     <div class="card-kpi-val">€{latest_val:,.1f} M</div>
                     <div class="card-kpi-sub">{flag_note}</div>
                 </div>
@@ -310,7 +336,7 @@ if page == "📌 Overview":
             st.markdown(
                 """
                 <div class="card-kpi">
-                    <div class="card-kpi-title">Latest GDP</div>
+                    <div class="card-kpi-title">Latest Value</div>
                     <div class="card-kpi-val">N/A</div>
                     <div class="card-kpi-sub">No numeric values</div>
                 </div>
@@ -361,8 +387,27 @@ if page == "📌 Overview":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Time-Series Chart
-    st.subheader("📈 Greek Annual GDP Time Series (Eurostat nama_10_gdp)")
+    # Feature: Data Quality Dimensions Scorecard Box
+    with st.expander("🛡️ Statistical Quality Health Scorecard (ISO/DAMA Dimensions)", expanded=True):
+        sc_col1, sc_col2, sc_col3, sc_col4, sc_col5 = st.columns(5)
+        with sc_col1:
+            st.metric("Quality Score", f"{scorecard['overall_score']:.1f}/100", delta=f"Grade {scorecard['grade']}")
+        with sc_col2:
+            st.metric("Completeness", f"{scorecard['completeness_score']:.1f}%", help="% of periods >= 1995 with numeric data")
+        with sc_col3:
+            st.metric("Period Validity", f"{scorecard['validity_score']:.1f}%", help="Calendar year conformity")
+        with sc_col4:
+            st.metric("Uniqueness", f"{scorecard['uniqueness_score']:.1f}%", help="Absence of duplicate years")
+        with sc_col5:
+            st.metric("Plausibility", f"{scorecard['plausibility_score']:.1f}%", help="Growth stability within expected bounds")
+
+    # Time-Series Chart with Milestones Option
+    st.subheader(f"📈 {active_series.description}")
+
+    chart_opt_col1, chart_opt_col2 = st.columns([3, 1])
+    with chart_opt_col2:
+        show_milestones = st.checkbox("Overlay Greek Milestones", value=True, help="Display key historical macroeconomic events.")
+
     if not df_numeric.empty:
         fig_ts = go.Figure()
 
@@ -372,10 +417,10 @@ if page == "📌 Overview":
                 x=df_numeric["period"],
                 y=df_numeric["value"],
                 mode="lines+markers",
-                name="Annual GDP",
+                name=active_series.unit,
                 line=dict(color="#38bdf8", width=2.5),
                 marker=dict(size=7, color="#0284c7"),
-                hovertemplate="<b>Year %{x}</b><br>GDP: €%{y:,.1f} M<extra></extra>",
+                hovertemplate="<b>Year %{x}</b><br>Value: €%{y:,.1f} M<extra></extra>",
             )
         )
 
@@ -389,9 +434,25 @@ if page == "📌 Overview":
                     mode="markers",
                     name="Provisional (Flag 'p')",
                     marker=dict(size=11, color="#fbbf24", symbol="diamond"),
-                    hovertemplate="<b>Year %{x} (Provisional)</b><br>GDP: €%{y:,.1f} M<extra></extra>",
+                    hovertemplate="<b>Year %{x} (Provisional)</b><br>Value: €%{y:,.1f} M<extra></extra>",
                 )
             )
+
+        # Feature: Overlay Greek Economic Milestones
+        if show_milestones:
+            for ms in get_greek_economic_milestones():
+                ms_yr = ms["year"]
+                if df_numeric["period"].min() <= ms_yr <= df_numeric["period"].max():
+                    fig_ts.add_vline(
+                        x=ms_yr,
+                        line_width=1.5,
+                        line_dash="dot",
+                        line_color=ms["color"],
+                        annotation_text=ms["label"],
+                        annotation_position="top left",
+                        annotation_font_size=10,
+                        annotation_font_color=ms["color"],
+                    )
 
         fig_ts.update_layout(
             template="plotly_dark",
@@ -400,14 +461,39 @@ if page == "📌 Overview":
             hovermode="x unified",
             font=dict(color="#cbd5e1"),
             xaxis=dict(title="Year", tickmode="linear", dtick=5, gridcolor="#334155", color="#cbd5e1"),
-            yaxis=dict(title="Gross Domestic Product (Million EUR)", gridcolor="#334155", color="#cbd5e1"),
+            yaxis=dict(title=f"Value ({active_series.unit})", gridcolor="#334155", color="#cbd5e1"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#cbd5e1")),
             margin=dict(l=40, r=20, t=30, b=40),
-            height=380,
+            height=390,
         )
         st.plotly_chart(fig_ts, use_container_width=True)
     else:
         st.info("No numeric observations to display in chart.")
+
+    # Feature: Statistical Anomaly & Growth Volatility Analysis
+    if not df_numeric.empty and len(df_numeric) > 2:
+        anomaly_data = calculate_statistical_anomalies(df_numeric)
+        with st.expander("📊 Statistical Growth & Volatility Diagnostics", expanded=False):
+            st.markdown(
+                f"- **Long-term Average Annual Growth:** `{anomaly_data['mean_growth']:+.2f}%`  \n"
+                f"- **Growth Volatility ($\sigma$):** `±{anomaly_data['std_growth']:.2f}%`"
+            )
+            if anomaly_data["anomalies"]:
+                st.markdown("**Detected Statistical Outlier Periods ($|Z| \ge 1.75\sigma$):**")
+                anom_rows = []
+                for a in anomaly_data["anomalies"]:
+                    anom_rows.append(
+                        {
+                            "Year": a["period"],
+                            "Value (€ M)": f"€{a['value']:,.1f}",
+                            "YoY Change (%)": f"{a['yoy_change_pct']:+.2f}%",
+                            "Z-Score": f"{a['z_score']:+.2f}",
+                            "Event Type": a["direction"],
+                        }
+                    )
+                st.dataframe(pd.DataFrame(anom_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No extreme statistical growth outliers detected beyond normal volatility.")
 
     # "What Changed?" Section
     st.markdown("---")
@@ -441,6 +527,17 @@ if page == "📌 Overview":
     else:
         st.info("ℹ️ **First recorded run:** No previous historical snapshot exists in the database for comparison yet. Run another check to observe revisions over time.")
 
+    # Feature: Download Executive Markdown Report
+    st.markdown("---")
+    report_md = generate_markdown_audit_report(current_run, findings, scorecard, selected_series_name)
+    st.download_button(
+        label="📄 Download Executive Quality Audit Report (.md)",
+        data=report_md,
+        file_name=f"greek_data_quality_report_run_{selected_run_id}.md",
+        mime="text/markdown",
+        type="secondary",
+    )
+
 
 # =========================================================
 # PAGE 2: DATA EXPLORER
@@ -448,7 +545,7 @@ if page == "📌 Overview":
 elif page == "🔍 Data Explorer":
     st.markdown('<div class="brand-title">🔍 Data Explorer</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="brand-subtitle">Interactive table of observations with filtering, searching, revision labeling, and CSV data export.</div>',
+        f'<div class="brand-subtitle">Interactive observations table for <b>{selected_series_name}</b> with filtering, searching, and CSV export.</div>',
         unsafe_allow_html=True,
     )
 
@@ -516,12 +613,12 @@ elif page == "🔍 Data Explorer":
         table_rows.append(
             {
                 "Year": int(item["period"]),
-                "GDP (Million EUR)": formatted_val,
+                f"Value ({active_series.unit})": formatted_val,
                 "Numeric Value": val,
                 "Data Status": tag,
                 "Status Flag": status_flag or "—",
                 "Flag Explanation": flag_meaning,
-                "Unit": "CP_MEUR",
+                "Unit": active_series.unit,
                 "Retrieved At (UTC)": item.get("fetched_at", "")[:19].replace("T", " "),
             }
         )
@@ -530,7 +627,7 @@ elif page == "🔍 Data Explorer":
 
     # Display interactive dataframe
     st.dataframe(
-        df_display[["Year", "GDP (Million EUR)", "Data Status", "Status Flag", "Flag Explanation", "Unit", "Retrieved At (UTC)"]],
+        df_display[[c for c in df_display.columns if c != "Numeric Value"]],
         use_container_width=True,
         hide_index=True,
     )
@@ -539,9 +636,9 @@ elif page == "🔍 Data Explorer":
     csv_buffer = io.StringIO()
     df_display.to_csv(csv_buffer, index=False)
     st.download_button(
-        label="📥 Export Filtered Data as CSV",
+        label=f"📥 Export Filtered Data as CSV ({len(filtered_records)} rows)",
         data=csv_buffer.getvalue(),
-        file_name=f"greek_gdp_filtered_run_{selected_run_id}.csv",
+        file_name=f"greek_data_filtered_{active_series.dataset}_{active_series.unit}_run_{selected_run_id}.csv",
         mime="text/csv",
         type="secondary",
     )
@@ -556,6 +653,17 @@ elif page == "🛡️ Quality Checks":
         '<div class="brand-subtitle">Structured evaluation of official statistics for missing values, duplicate periods, and historical revisions.</div>',
         unsafe_allow_html=True,
     )
+
+    # Scorecard Banner on Quality page
+    q_col1, q_col2, q_col3 = st.columns([1.5, 2, 2])
+    with q_col1:
+        st.metric("Composite Health Index", f"{scorecard['overall_score']:.1f}/100", f"Grade {scorecard['grade']}")
+    with q_col2:
+        st.write(f"**Completeness:** {scorecard['completeness_score']:.1f}% • **Validity:** {scorecard['validity_score']:.1f}%")
+        st.write(f"**Uniqueness:** {scorecard['uniqueness_score']:.1f}% • **Plausibility:** {scorecard['plausibility_score']:.1f}%")
+    with q_col3:
+        st.write(f"**Errors Detected:** {scorecard['error_count']} (Active series)")
+        st.write(f"**Review Warnings:** {scorecard['warning_count']} (Heuristic checks)")
 
     rule_defs = get_quality_rule_descriptions()
 
@@ -626,7 +734,7 @@ elif page == "🛡️ Quality Checks":
 elif page == "📜 Run History":
     st.markdown('<div class="brand-title">📜 Run History & Snapshot Comparison</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="brand-subtitle">Chronological audit log of all quality surveillance runs and side-by-side snapshot comparison.</div>',
+        f'<div class="brand-subtitle">Chronological audit log for <b>{selected_series_name}</b> and side-by-side snapshot comparator.</div>',
         unsafe_allow_html=True,
     )
 
@@ -701,13 +809,13 @@ elif page == "ℹ️ Source & Methodology":
     st.markdown(
         f"""
         - **Source Authority:** [Eurostat (European Commission)](https://ec.europa.eu/eurostat)
-        - **Dataset Code:** `{DEFAULT_SERIES.dataset}`
-        - **Indicator:** Gross domestic product at market prices (`B1GQ`)
-        - **Geographic Entity:** Greece (`EL`)
+        - **Dataset Code:** `{active_series.dataset}`
+        - **Indicator:** {active_series.description}
+        - **Geographic Entity:** Greece (`{active_series.dimensions.get('geo')}`)
         - **Accounting Standard:** European System of Accounts (ESA 2010)
-        - **Valuation Unit:** Current prices, million euro (`CP_MEUR`)
-        - **Reporting Frequency:** Annual (`A`)
-        - **Direct API Wire Endpoint:** [`{DEFAULT_SERIES.source_url}`]({DEFAULT_SERIES.source_url})
+        - **Valuation Unit:** `{active_series.unit}`
+        - **Reporting Frequency:** Annual (`{active_series.dimensions.get('freq', 'A')}`)
+        - **Direct API Wire Endpoint:** [`{active_series.source_url}`]({active_series.source_url})
         - **Reuse Terms:** Subject to Eurostat open data reuse policy (free reuse with attribution).
         """
     )
@@ -739,7 +847,7 @@ elif page == "ℹ️ Source & Methodology":
     st.subheader("Current Scope & Known Limitations")
     st.warning(
         """
-        - **Single Series Prototype:** This release is focused specifically on Greece's annual GDP from Eurostat (`nama_10_gdp`). **It does not represent comprehensive coverage of all Greek public statistics.**
+        - **Supported Indicators:** Focuses on Eurostat's annual Greek GDP indicators (Nominal GDP in current prices and Real GDP in chain-linked 2020 volumes). **It does not represent comprehensive coverage of all Greek public statistics.**
         - **Heuristics vs. Verified Facts:** The 30% YoY threshold is a review heuristic, not statistical proof of error. Real-world events (e.g. the 2008–2015 Greek economic crisis or the 2020 COVID-19 pandemic) cause legitimate macroeconomic swings.
         - **Eurostat Revisions:** Official national accounts undergo regular historical revisions by national authorities (ELSTAT) and Eurostat as preliminary data is finalized.
         """

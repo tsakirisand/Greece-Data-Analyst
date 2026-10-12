@@ -53,6 +53,20 @@ DEFAULT_SERIES = SeriesConfig(
     ),
 )
 
+REAL_GDP_SERIES = SeriesConfig(
+    series_id="eurostat.nama_10_gdp.EL.B1GQ.CLV20_MEUR",
+    dataset="nama_10_gdp",
+    dimensions={"freq": "A", "unit": "CLV20_MEUR", "na_item": "B1GQ", "geo": "EL"},
+    unit="CLV20_MEUR",
+    description="Gross Domestic Product at market prices, Greece, annual, chain-linked volumes 2020 (million EUR)",
+    source_url="https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/nama_10_gdp/A.CLV20_MEUR.B1GQ.EL?format=TSV",
+)
+
+AVAILABLE_SERIES: dict[str, SeriesConfig] = {
+    "Nominal GDP (Current Prices - CP_MEUR)": DEFAULT_SERIES,
+    "Real GDP (Chain-Linked Volumes 2020 - CLV20_MEUR)": REAL_GDP_SERIES,
+}
+
 # Retain backward-compatible references for external callers
 EUROSTAT_URL = DEFAULT_SERIES.source_url
 SERIES_QUERY = {

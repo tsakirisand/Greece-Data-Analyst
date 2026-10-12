@@ -3,10 +3,14 @@ from __future__ import annotations
 import pytest
 
 from greek_data_monitor.dashboard_service import (
+    calculate_quality_scorecard,
+    calculate_statistical_anomalies,
     compare_run_snapshots,
     filter_and_sort_observations,
     format_gdp_value,
+    generate_markdown_audit_report,
     get_flag_descriptions,
+    get_greek_economic_milestones,
     get_quality_rule_descriptions,
 )
 
@@ -109,3 +113,78 @@ def test_filter_and_sort_observations() -> None:
     r6 = filter_and_sort_observations(obs, sort_by="period", ascending=False)
     assert r6[0]["period"] == 2024
     assert r6[-1]["period"] == 1990
+
+
+def test_calculate_quality_scorecard_clean() -> None:
+    obs = [
+        {"period": 1990, "value": None},  # Pre-1995, should not penalize completeness
+        {"period": 2020, "value": 167539.5},
+        {"period": 2021, "value": 184574.6},
+    ]
+    findings = [{"severity": "PASS", "rule": "all_rules", "message": "all good"}]
+    card = calculate_quality_scorecard(obs, findings, min_year=1995)
+
+    assert card["completeness_score"] == 100.0
+    assert card["validity_score"] == 100.0
+    assert card["uniqueness_score"] == 100.0
+    assert card["plausibility_score"] == 100.0
+    assert card["overall_score"] == 100.0
+    assert card["grade"] == "A+"
+
+
+def test_calculate_quality_scorecard_with_issues() -> None:
+    obs = [
+        {"period": 2020, "value": None},  # Active missing value
+        {"period": 2021, "value": 184574.6},
+    ]
+    findings = [
+        {"severity": "ERROR", "rule": "not_null", "message": "missing 2020"},
+        {"severity": "WARN", "rule": "year_over_year_change", "message": "large change"},
+    ]
+    card = calculate_quality_scorecard(obs, findings, min_year=1995)
+    assert card["completeness_score"] == 50.0
+    assert card["plausibility_score"] == 85.0
+    assert card["error_count"] == 1
+    # Error cap should apply
+    assert card["overall_score"] <= 65.0
+    assert card["grade"] in ("C", "F")
+
+
+def test_get_greek_economic_milestones() -> None:
+    milestones = get_greek_economic_milestones()
+    assert len(milestones) >= 5
+    years = [m["year"] for m in milestones]
+    assert 2001 in years
+    assert 2009 in years
+    assert 2020 in years
+
+
+def test_calculate_statistical_anomalies() -> None:
+    import pandas as pd
+    df = pd.DataFrame(
+        [
+            {"period": 2018, "value": 100.0, "yoy_change_pct": 2.0},
+            {"period": 2019, "value": 102.0, "yoy_change_pct": 2.0},
+            {"period": 2020, "value": 70.0, "yoy_change_pct": -31.37},  # Extreme outlier
+            {"period": 2021, "value": 72.0, "yoy_change_pct": 2.85},
+            {"period": 2022, "value": 74.0, "yoy_change_pct": 2.78},
+        ]
+    )
+    res = calculate_statistical_anomalies(df)
+    assert len(res["anomalies"]) >= 1
+    assert res["anomalies"][0]["period"] == 2020
+    assert res["anomalies"][0]["direction"] == "Contraction"
+
+
+def test_generate_markdown_audit_report() -> None:
+    run_dict = {"id": 1, "checked_at": "2026-10-12T18:00:00Z", "status": "PASS", "observation_count": 51}
+    findings = [{"severity": "PASS", "rule": "all_rules", "period": None, "message": "All passed"}]
+    scorecard = {"overall_score": 98.5, "grade": "A+", "completeness_score": 100.0, "validity_score": 100.0, "uniqueness_score": 100.0, "plausibility_score": 100.0, "error_count": 0, "warning_count": 0, "active_period_count": 31}
+
+    md = generate_markdown_audit_report(run_dict, findings, scorecard, "Eurostat Greek GDP")
+    assert "Official Data Quality Audit Report" in md
+    assert "Eurostat Greek GDP" in md
+    assert "#1" in md
+    assert "98.5/100" in md
+    assert "A+" in md
+
