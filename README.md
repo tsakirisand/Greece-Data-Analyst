@@ -62,21 +62,37 @@ gdm run
 
 ### 2. Launch Interactive Web Dashboard
 
-To inspect quality metrics, interactive Plotly charts, and historical snapshots in your browser:
+To explore the data, visual charts, quality findings, and historical revisions in your browser:
 
 ```bash
 streamlit run app.py
 ```
 
 The web dashboard is available at:
-**[http://localhost:8501](http://localhost:8501)**
+👉 **[http://localhost:8501](http://localhost:8501)**
 
-Features included in the web interface:
-- **Interactive KPI Cards:** Current GDP, latest YoY growth, error/warning count, and quality status.
-- **Visual Analytics:** Interactive GDP time series curve (with provisional flags) and YoY growth vs. warning threshold band chart.
-- **On-Demand Runs:** Click *'Fetch & Run Quality Check'* to execute real-time ingestion from Eurostat.
-- **Snapshot Audit Viewer:** Compare historical quality runs and inspect rule findings.
-- **Data Export:** Filter raw observations and export snapshots as CSV.
+The dashboard includes 5 comprehensive sections:
+1. **📌 Overview:**
+   - **Audit Status Banner:** Immediate visual status (`PASS`, `WARN`, `FAIL`) for the active run snapshot.
+   - **KPI Cards:** Latest observed GDP, latest YoY growth percentage, total observations, and retrieval timestamp.
+   - **Time-Series Visualization:** Interactive Plotly GDP trajectory (1995–2025) highlighting provisional (`p`) observation diamonds and tooltips.
+   - **"What Changed?" Section:** Automated delta analysis comparing the current run against the preceding historical run (identifying value revisions, added periods, or status flag transitions).
+2. **🔍 Data Explorer:**
+   - **Interactive Observation Table:** Displays Year, GDP (Million EUR), Data Status label, Status Flag (`p`, `b`, `:`), Flag Meaning, Unit, and Retrieval Timestamp.
+   - **Filters:** Dynamic year range slider, observation status filter (*All*, *Numeric only*, *Missing values only*, *Provisional only*, *Flagged only*), text search, and column sorting.
+   - **CSV Export:** One-click download button to export the currently filtered observations as a CSV file.
+3. **🛡️ Quality Checks:**
+   - **Findings by Severity:** Visual breakdown of findings by severity (`ERROR`, `WARN`, `INFO`, `PASS`) with rule names and affected periods.
+   - **Plain-Language Explanations:** Explains what each rule checks, why it matters, and review guidance.
+   - **Review Flags vs. Errors:** Clearly explains that large YoY swings trigger review warnings (`WARN`), not rejections of official data.
+4. **📜 Run History & Snapshot Comparison:**
+   - **Audit Log:** Chronological table of all recorded quality surveillance runs with timestamps, status, observation counts, errors, and warnings.
+   - **Snapshot Comparator:** Allows users to select any baseline Run A and target Run B to inspect a side-by-side diff table highlighting revised, added, or removed values.
+5. **ℹ️ Source & Methodology:**
+   - **Data Provenance:** Dataset code (`nama_10_gdp`), geography (`EL`), item (`B1GQ`), unit (`CP_MEUR`), frequency (`A`), direct API URL, and reuse attribution.
+   - **Pipeline Explanation:** Explains the end-to-end flow from Eurostat's SDMX 2.1 API to TSV parsing, SQLite persistence, quality checks, and dashboard presentation.
+   - **Eurostat Flags Glossary:** Plain-language definitions for `:`, `p`, `b`, `e`, `u`, `c`.
+   - **Scope & Limitations:** Explicitly documents that this prototype monitors one series and does not claim comprehensive Greek public-data coverage.
 
 #### Command Options
 
