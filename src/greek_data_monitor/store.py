@@ -116,91 +116,95 @@ def save_run(
     unit = first_obs.unit if first_obs else "CP_MEUR"
     source_url = first_obs.source_url if first_obs else ""
 
-    with get_connection(database_url) as connection:
-        init_db(connection)
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
 
-        # Upsert series metadata
-        connection.execute(
-            """
-            INSERT INTO series_metadata (series_id, dataset, dimensions_json, unit, source_url, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(series_id) DO UPDATE SET
-                dataset = excluded.dataset,
-                dimensions_json = excluded.dimensions_json,
-                unit = excluded.unit,
-                source_url = excluded.source_url,
-                updated_at = excluded.updated_at
-            """,
-            (
-                series_id,
-                dataset,
-                json.dumps(dimensions),
-                unit,
-                source_url,
-                checked_at,
-            ),
-        )
-
-        # Record quality run
-        cursor = connection.execute(
-            """
-            INSERT INTO quality_runs (series_id, checked_at, observation_count, status, error_count, warning_count, source_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                series_id,
-                checked_at,
-                len(observations),
-                status,
-                error_count,
-                warning_count,
-                source_url,
-            ),
-        )
-        run_id = int(cursor.lastrowid)
-
-        # Record observations snapshot
-        obs_rows = [
-            (
-                run_id,
-                series_id,
-                item.period,
-                item.value,
-                item.source_status,
-                item.raw_value,
-                item.retrieved_at or checked_at,
+            # Upsert series metadata
+            conn.execute(
+                """
+                INSERT INTO series_metadata (series_id, dataset, dimensions_json, unit, source_url, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(series_id) DO UPDATE SET
+                    dataset = excluded.dataset,
+                    dimensions_json = excluded.dimensions_json,
+                    unit = excluded.unit,
+                    source_url = excluded.source_url,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    series_id,
+                    dataset,
+                    json.dumps(dimensions),
+                    unit,
+                    source_url,
+                    checked_at,
+                ),
             )
-            for item in observations
-        ]
-        connection.executemany(
-            """
-            INSERT INTO observations (run_id, series_id, period, value, source_status, raw_value, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            obs_rows,
-        )
 
-        # Record quality findings
-        finding_rows = [
-            (
-                run_id,
-                item.severity,
-                item.rule,
-                item.message,
-                item.period,
-                json.dumps(item.details) if item.details else None,
+            # Record quality run
+            cursor = conn.execute(
+                """
+                INSERT INTO quality_runs (series_id, checked_at, observation_count, status, error_count, warning_count, source_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    series_id,
+                    checked_at,
+                    len(observations),
+                    status,
+                    error_count,
+                    warning_count,
+                    source_url,
+                ),
             )
-            for item in findings
-        ]
-        connection.executemany(
-            """
-            INSERT INTO quality_findings (run_id, severity, rule, message, period, details_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            finding_rows,
-        )
+            run_id = int(cursor.lastrowid)
 
-        return run_id
+            # Record observations snapshot
+            obs_rows = [
+                (
+                    run_id,
+                    series_id,
+                    item.period,
+                    item.value,
+                    item.source_status,
+                    item.raw_value,
+                    item.retrieved_at or checked_at,
+                )
+                for item in observations
+            ]
+            conn.executemany(
+                """
+                INSERT INTO observations (run_id, series_id, period, value, source_status, raw_value, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                obs_rows,
+            )
+
+            # Record quality findings
+            finding_rows = [
+                (
+                    run_id,
+                    item.severity,
+                    item.rule,
+                    item.message,
+                    item.period,
+                    json.dumps(item.details) if item.details else None,
+                )
+                for item in findings
+            ]
+            conn.executemany(
+                """
+                INSERT INTO quality_findings (run_id, severity, rule, message, period, details_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                finding_rows,
+            )
+
+            return run_id
+    finally:
+        conn.close()
 
 
 def get_latest_observations(
@@ -208,57 +212,61 @@ def get_latest_observations(
     series_id: str = "eurostat.nama_10_gdp.EL.B1GQ.CP_MEUR",
 ) -> list[Observation]:
     """Retrieve observations snapshot from the latest recorded run."""
-    with get_connection(database_url) as connection:
-        init_db(connection)
-        row = connection.execute(
-            """
-            SELECT id FROM quality_runs
-            WHERE series_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (series_id,),
-        ).fetchone()
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            row = conn.execute(
+                """
+                SELECT id FROM quality_runs
+                WHERE series_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (series_id,),
+            ).fetchone()
 
-        if not row:
-            return []
+            if not row:
+                return []
 
-        latest_run_id = row["id"]
+            latest_run_id = row["id"]
 
-        meta_row = connection.execute(
-            "SELECT dataset, dimensions_json, unit, source_url FROM series_metadata WHERE series_id = ?",
-            (series_id,),
-        ).fetchone()
+            meta_row = conn.execute(
+                "SELECT dataset, dimensions_json, unit, source_url FROM series_metadata WHERE series_id = ?",
+                (series_id,),
+            ).fetchone()
 
-        dataset = meta_row["dataset"] if meta_row else "nama_10_gdp"
-        dims = json.loads(meta_row["dimensions_json"]) if meta_row else {}
-        unit = meta_row["unit"] if meta_row else "CP_MEUR"
-        src_url = meta_row["source_url"] if meta_row else ""
+            dataset = meta_row["dataset"] if meta_row else "nama_10_gdp"
+            dims = json.loads(meta_row["dimensions_json"]) if meta_row else {}
+            unit = meta_row["unit"] if meta_row else "CP_MEUR"
+            src_url = meta_row["source_url"] if meta_row else ""
 
-        obs_rows = connection.execute(
-            """
-            SELECT period, value, source_status, raw_value, fetched_at
-            FROM observations
-            WHERE run_id = ?
-            ORDER BY period ASC
-            """,
-            (latest_run_id,),
-        ).fetchall()
+            obs_rows = conn.execute(
+                """
+                SELECT period, value, source_status, raw_value, fetched_at
+                FROM observations
+                WHERE run_id = ?
+                ORDER BY period ASC
+                """,
+                (latest_run_id,),
+            ).fetchall()
 
-        return [
-            Observation(
-                period=r["period"],
-                value=r["value"],
-                source_status=r["source_status"],
-                dataset=dataset,
-                dimensions=dims,
-                unit=unit,
-                retrieved_at=r["fetched_at"],
-                source_url=src_url,
-                raw_value=r["raw_value"] or "",
-            )
-            for r in obs_rows
-        ]
+            return [
+                Observation(
+                    period=r["period"],
+                    value=r["value"],
+                    source_status=r["source_status"],
+                    dataset=dataset,
+                    dimensions=dims,
+                    unit=unit,
+                    retrieved_at=r["fetched_at"],
+                    source_url=src_url,
+                    raw_value=r["raw_value"] or "",
+                )
+                for r in obs_rows
+            ]
+    finally:
+        conn.close()
 
 
 def list_runs(
@@ -267,67 +275,75 @@ def list_runs(
     series_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """List recent quality runs with summary metrics."""
-    with get_connection(database_url) as connection:
-        init_db(connection)
-        if series_id:
-            rows = connection.execute(
-                """
-                SELECT id, series_id, checked_at, observation_count, status, error_count, warning_count, source_url
-                FROM quality_runs
-                WHERE series_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (series_id, limit),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-                SELECT id, series_id, checked_at, observation_count, status, error_count, warning_count, source_url
-                FROM quality_runs
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            if series_id:
+                rows = conn.execute(
+                    """
+                    SELECT id, series_id, checked_at, observation_count, status, error_count, warning_count, source_url
+                    FROM quality_runs
+                    WHERE series_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (series_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, series_id, checked_at, observation_count, status, error_count, warning_count, source_url
+                    FROM quality_runs
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
 
-        return [dict(r) for r in rows]
+            return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def get_run_details(database_url: str, run_id: int) -> dict[str, Any] | None:
     """Retrieve full details for a quality run including findings and observations."""
-    with get_connection(database_url) as connection:
-        init_db(connection)
-        run_row = connection.execute(
-            "SELECT * FROM quality_runs WHERE id = ?",
-            (run_id,),
-        ).fetchone()
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            run_row = conn.execute(
+                "SELECT * FROM quality_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
 
-        if not run_row:
-            return None
+            if not run_row:
+                return None
 
-        findings_rows = connection.execute(
-            "SELECT id, severity, rule, message, period, details_json FROM quality_findings WHERE run_id = ? ORDER BY id ASC",
-            (run_id,),
-        ).fetchall()
+            findings_rows = conn.execute(
+                "SELECT id, severity, rule, message, period, details_json FROM quality_findings WHERE run_id = ? ORDER BY id ASC",
+                (run_id,),
+            ).fetchall()
 
-        obs_rows = connection.execute(
-            "SELECT period, value, source_status, raw_value, fetched_at FROM observations WHERE run_id = ? ORDER BY period ASC",
-            (run_id,),
-        ).fetchall()
+            obs_rows = conn.execute(
+                "SELECT period, value, source_status, raw_value, fetched_at FROM observations WHERE run_id = ? ORDER BY period ASC",
+                (run_id,),
+            ).fetchall()
 
-        return {
-            "run": dict(run_row),
-            "findings": [
-                {
-                    "id": f["id"],
-                    "severity": f["severity"],
-                    "rule": f["rule"],
-                    "message": f["message"],
-                    "period": f["period"],
-                    "details": json.loads(f["details_json"]) if f["details_json"] else {},
-                }
-                for f in findings_rows
-            ],
-            "observations": [dict(o) for o in obs_rows],
-        }
+            return {
+                "run": dict(run_row),
+                "findings": [
+                    {
+                        "id": f["id"],
+                        "severity": f["severity"],
+                        "rule": f["rule"],
+                        "message": f["message"],
+                        "period": f["period"],
+                        "details": json.loads(f["details_json"]) if f["details_json"] else {},
+                    }
+                    for f in findings_rows
+                ],
+                "observations": [dict(o) for o in obs_rows],
+            }
+    finally:
+        conn.close()

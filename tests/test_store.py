@@ -30,17 +30,20 @@ def _make_obs(period: int, value: float | None, status: str | None = None) -> Ob
 
 def test_init_db_in_memory() -> None:
     conn = get_connection(":memory:")
-    init_db(conn)
-    tables = [
-        row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    ]
-    assert "quality_runs" in tables
-    assert "observations" in tables
-    assert "quality_findings" in tables
-    assert "series_metadata" in tables
+    try:
+        init_db(conn)
+        tables = [
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        assert "quality_runs" in tables
+        assert "observations" in tables
+        assert "quality_findings" in tables
+        assert "series_metadata" in tables
+    finally:
+        conn.close()
 
 
 def test_save_run_and_query_snapshot(tmp_path: Path) -> None:
