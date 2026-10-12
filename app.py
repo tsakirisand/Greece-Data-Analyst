@@ -42,7 +42,7 @@ st.markdown(
         margin-bottom: 0.15rem;
     }
     .brand-subtitle {
-        color: #475569;
+        color: #94a3b8;
         font-size: 0.98rem;
         margin-bottom: 1.2rem;
     }
@@ -50,48 +50,68 @@ st.markdown(
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        padding: 0.25rem 0.65rem;
+        padding: 0.3rem 0.75rem;
         border-radius: 9999px;
         font-size: 0.82rem;
         font-weight: 700;
         line-height: 1;
         letter-spacing: 0.02em;
     }
-    .badge-pass { background-color: #dcfce7; color: #14532d; border: 1px solid #86efac; }
-    .badge-warn { background-color: #fef3c7; color: #78350f; border: 1px solid #fde68a; }
-    .badge-error { background-color: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
-    .badge-info { background-color: #e0f2fe; color: #0c4a6e; border: 1px solid #7dd3fc; }
+    .badge-pass { background-color: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.5); }
+    .badge-warn { background-color: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.5); }
+    .badge-error { background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.5); }
+    .badge-info { background-color: rgba(14, 165, 233, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.5); }
     .card-kpi {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
+        background-color: #1e293b;
+        border: 1px solid #334155;
         border-radius: 0.75rem;
-        padding: 1rem 1.15rem;
+        padding: 1.1rem 1.15rem;
+        height: 155px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        box-sizing: border-box;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
     }
     .card-kpi-title {
-        color: #64748b;
-        font-size: 0.85rem;
+        color: #94a3b8;
+        font-size: 0.82rem;
         font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.05em;
+        line-height: 1.25;
     }
     .card-kpi-val {
-        font-size: 1.6rem;
+        font-size: 1.65rem;
         font-weight: 800;
-        color: #0f172a;
-        margin-top: 0.25rem;
+        color: #f8fafc;
+        margin: 0.2rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
     .card-kpi-sub {
         font-size: 0.82rem;
-        color: #64748b;
-        margin-top: 0.2rem;
+        color: #94a3b8;
+        line-height: 1.25;
     }
     .callout-box {
-        background: #f1f5f9;
+        background: #0f172a;
+        border: 1px solid #334155;
         border-left: 4px solid #0284c7;
         padding: 0.85rem 1.1rem;
         border-radius: 0 0.5rem 0.5rem 0;
         margin-bottom: 1.2rem;
         font-size: 0.92rem;
+        color: #e2e8f0;
+    }
+    .callout-box code {
+        background: #1e293b !important;
+        color: #38bdf8 !important;
+        border: 1px solid #334155;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.85rem;
     }
     </style>
     """,
@@ -267,7 +287,15 @@ if page == "📌 Overview":
             latest_val = latest_row["value"]
             latest_yr = int(latest_row["period"])
             flag = latest_row.get("source_status")
-            flag_note = f" (Flag: <code>{flag}</code> provisional)" if flag == "p" else (f" (Flag: <code>{flag}</code>)" if flag else " (Finalized)")
+            flag_note = (
+                f"Flag: <code style='background:#0f172a;color:#fbbf24;border:1px solid #334155;padding:1px 5px;border-radius:4px;'>{flag}</code> (Provisional)"
+                if flag == "p"
+                else (
+                    f"Flag: <code style='background:#0f172a;color:#38bdf8;border:1px solid #334155;padding:1px 5px;border-radius:4px;'>{flag}</code>"
+                    if flag
+                    else "Status: Finalized numeric"
+                )
+            )
             st.markdown(
                 f"""
                 <div class="card-kpi">
@@ -323,7 +351,7 @@ if page == "📌 Overview":
         st.markdown(
             f"""
             <div class="card-kpi">
-                <div class="card-kpi-title">Observations & Retrieval</div>
+                <div class="card-kpi-title">Total Observations</div>
                 <div class="card-kpi-val">{len(observations)} periods</div>
                 <div class="card-kpi-sub">Retrieved: {checked_time} UTC</div>
             </div>
@@ -345,8 +373,8 @@ if page == "📌 Overview":
                 y=df_numeric["value"],
                 mode="lines+markers",
                 name="Annual GDP",
-                line=dict(color="#0284c7", width=2.5),
-                marker=dict(size=7, color="#0369a1"),
+                line=dict(color="#38bdf8", width=2.5),
+                marker=dict(size=7, color="#0284c7"),
                 hovertemplate="<b>Year %{x}</b><br>GDP: €%{y:,.1f} M<extra></extra>",
             )
         )
@@ -360,17 +388,20 @@ if page == "📌 Overview":
                     y=df_prov["value"],
                     mode="markers",
                     name="Provisional (Flag 'p')",
-                    marker=dict(size=11, color="#f59e0b", symbol="diamond"),
+                    marker=dict(size=11, color="#fbbf24", symbol="diamond"),
                     hovertemplate="<b>Year %{x} (Provisional)</b><br>GDP: €%{y:,.1f} M<extra></extra>",
                 )
             )
 
         fig_ts.update_layout(
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
             hovermode="x unified",
-            xaxis=dict(title="Year", tickmode="linear", dtick=5, gridcolor="#f1f5f9"),
-            yaxis=dict(title="Gross Domestic Product (Million EUR)", gridcolor="#f1f5f9"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            font=dict(color="#cbd5e1"),
+            xaxis=dict(title="Year", tickmode="linear", dtick=5, gridcolor="#334155", color="#cbd5e1"),
+            yaxis=dict(title="Gross Domestic Product (Million EUR)", gridcolor="#334155", color="#cbd5e1"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#cbd5e1")),
             margin=dict(l=40, r=20, t=30, b=40),
             height=380,
         )
