@@ -18,12 +18,15 @@ from greek_data_monitor.catalog import (
 )
 from greek_data_monitor.config import AVAILABLE_SERIES, DEFAULT_SERIES, Settings
 from greek_data_monitor.dashboard_service import (
+    calculate_annual_change,
     calculate_indicator_correlation_matrix,
     calculate_quality_scorecard,
     calculate_safe_comparison,
     calculate_statistical_anomalies,
     compare_run_snapshots,
     filter_and_sort_observations,
+    format_check_age,
+    format_source_status,
     format_gdp_value,
     format_indicator_value,
     generate_markdown_audit_report,
@@ -261,9 +264,9 @@ if page == "📌 Overview":
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Catalog Indicators", f"{len(all_kpis)} Series", "6 Domains")
-    m2.metric("Active Streams", f"{active_count} / {len(all_kpis)}", f"{health_rate}% Live")
-    m3.metric("Verified Observations", f"{total_obs:,}", "Historical Records")
-    m4.metric("Latest Release", f"Ref: {latest_ref}", "Annual Series")
+    m2.metric("Indicators with Data", f"{active_count} / {len(all_kpis)}", f"{health_rate}% stored")
+    m3.metric("Stored Observations", f"{total_obs:,}", "Historical Records")
+    m4.metric("Latest Reference Year", f"Ref: {latest_ref}", "Annual Series")
 
     st.markdown("---")
 
@@ -294,11 +297,7 @@ if page == "📌 Overview":
     if view_mode == "Compact Table":
         table_rows = []
         for item in target_kpis:
-            yoy_display = "—"
-            if item["yoy_change_pct"] is not None:
-                sign = "+" if item["yoy_change_pct"] > 0 else ""
-                icon = "▲" if item["yoy_change_pct"] > 0 else "▼"
-                yoy_display = f"{icon} {sign}{item['yoy_change_pct']:.1f}%"
+            yoy_display = item["change_display"]
             table_rows.append(
                 {
                     "Topic": f"{item['topic_icon']} {item['topic']}",
@@ -306,7 +305,8 @@ if page == "📌 Overview":
                     "Latest Value": item["formatted_value"],
                     "Reference Period": item["latest_period"] if item["latest_period"] else "—",
                     "YoY Change": yoy_display,
-                    "Status": "LIVE" if item["has_data"] else "EMPTY",
+                    "Source Status": item["data_status"],
+                    "Last Retrieved (UTC)": item["retrieved_at"] or "Never",
                     "Source": item["source_name"],
                 }
             )
@@ -322,11 +322,7 @@ if page == "📌 Overview":
                     val_str = item["formatted_value"]
                     p_str = f"Ref: {item['latest_period']}" if item["latest_period"] else "No Data"
 
-                    yoy_str = ""
-                    if item["yoy_change_pct"] is not None:
-                        sign = "+" if item["yoy_change_pct"] > 0 else ""
-                        icon = "▲" if item["yoy_change_pct"] > 0 else "▼"
-                        yoy_str = f"{icon} {sign}{item['yoy_change_pct']:.1f}%"
+                    yoy_str = item["change_display"]
 
                     topic_accent = {
                         "National Accounts & Output": "#38bdf8",
@@ -337,7 +333,7 @@ if page == "📌 Overview":
                         "Financial & Monetary": "#06b6d4",
                     }.get(item["topic"], "#0ea5e9")
 
-                    status_badge = '<span class="badge badge-pass" style="font-size:0.65rem; padding:0.1rem 0.45rem;">LIVE</span>' if item["has_data"] else '<span class="badge badge-error" style="font-size:0.65rem; padding:0.1rem 0.45rem;">EMPTY</span>'
+                    status_badge = f'<span class="badge badge-info" style="font-size:0.65rem; padding:0.1rem 0.45rem;">{item["data_status"]}</span>'
 
                     cols[j].markdown(
                         f"""
@@ -350,7 +346,7 @@ if page == "📌 Overview":
                             <div class="card-kpi-val">{val_str}</div>
                             <div class="card-kpi-sub">
                                 <span>{p_str}</span>
-                                <span style="font-weight:600; color: {'#34d399' if (item['yoy_change_pct'] or 0) >= 0 else '#fbbf24'}">{yoy_str}</span>
+                                <span style="font-weight:600; color: #94a3b8">{yoy_str}</span>
                             </div>
                         </div>
                         """,
@@ -564,16 +560,20 @@ elif page == "🔍 Explore Data":
     latest_period = valid_obs[-1].period if valid_obs else "N/A"
     prev_val = valid_obs[-2].value if len(valid_obs) >= 2 else None
 
-    yoy_pct = None
-    if latest_val is not None and prev_val is not None and prev_val != 0:
-        yoy_pct = ((latest_val - prev_val) / abs(prev_val)) * 100.0
+    annual_change = calculate_annual_change(
+        valid_obs[-1] if valid_obs else None,
+        valid_obs[-2] if len(valid_obs) >= 2 else None,
+        current_ind.change_metric,
+    )
 
     kpi_cols = st.columns(4)
-    kpi_cols[0].metric("Latest Value", format_indicator_value(latest_val, current_ind.unit, current_ind.unit_short), f"{yoy_pct:+.2f}% YoY" if yoy_pct is not None else None)
+    kpi_cols[0].metric("Latest Value", format_indicator_value(latest_val, current_ind.unit, current_ind.unit_short), annual_change["display"] + " YoY" if annual_change["value"] is not None else None, delta_color="off")
     kpi_cols[1].metric("Reference Period", str(latest_period), f"{len(valid_obs)} valid years")
     kpi_cols[2].metric("Measurement Unit", current_ind.unit_short, current_ind.frequency)
     kpi_cols[3].metric("Official Authority", current_ind.source_name, current_ind.dataset_code)
 
+    st.caption(f"Source status: {format_source_status(valid_obs[-1].source_status if valid_obs else None, bool(valid_obs))}. "
+               f"Retrieved: {valid_obs[-1].retrieved_at if valid_obs else 'Never'}. Annual changes require consecutive reference years.")
     st.markdown("---")
 
     # Time-series Chart & Controls
@@ -591,7 +591,7 @@ elif page == "🔍 Explore Data":
             "Period": o.period,
             "Value": o.value,
             "Formatted": format_indicator_value(o.value, current_ind.unit, current_ind.unit_short),
-            "Status": o.source_status or "Normal",
+            "Status": format_source_status(o.source_status, o.value is not None),
             "Raw": o.raw_value,
         }
         for o in obs
@@ -1202,7 +1202,8 @@ elif page == "🛡️ Data Quality & Freshness":
     )
 
     # Cross-Indicator Quality & Freshness Health Matrix
-    st.markdown("### 📡 Source Health & Freshness Tracker across Catalog")
+    st.markdown("### 📡 Source Checks & Retrieval Age")
+    st.caption("Retrieval age describes when this app checked the source. The reference year and source flags describe the observations; a recent check does not make a value final or current-year data.")
     all_status = get_all_series_status(db_url)
 
     status_rows = []
@@ -1214,20 +1215,20 @@ elif page == "🛡️ Data Quality & Freshness":
             checked_at = st_entry["checked_at"][:19].replace("T", " ") if st_entry["checked_at"] else "N/A"
             errs = st_entry["error_count"]
             warns = st_entry["warning_count"]
-            freshness = "LIVE (<24h)" if "2026" in checked_at else "CACHED"
+            freshness = format_check_age(st_entry["checked_at"])
         else:
             run_status = "NOT_SYNCED"
             latest_p = "—"
             checked_at = "Never"
             errs = 0
             warns = 0
-            freshness = "STALE"
+            freshness = "Not checked"
 
         status_rows.append({
             "Topic": f"{ind.topic_icon} {ind.topic}",
             "Indicator": ind.name,
             "Latest Period": latest_p,
-            "Freshness": freshness,
+            "Retrieval Age": freshness,
             "Audit Status": run_status,
             "Errors": errs,
             "Warnings": warns,
@@ -1237,7 +1238,7 @@ elif page == "🛡️ Data Quality & Freshness":
 
     df_status = pd.DataFrame(status_rows)
     st.dataframe(
-        df_status[["Topic", "Indicator", "Latest Period", "Freshness", "Audit Status", "Errors", "Warnings", "Last Checked (UTC)"]],
+        df_status[["Topic", "Indicator", "Latest Period", "Retrieval Age", "Audit Status", "Errors", "Warnings", "Last Checked (UTC)"]],
         use_container_width=True,
         height=280,
     )
@@ -1277,10 +1278,10 @@ elif page == "🛡️ Data Quality & Freshness":
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
                     <h3 style="margin:0; font-size:1.4rem;">Quality Score: {scorecard['overall_score']}/100</h3>
-                    <span style="color:#94a3b8; font-size:0.85rem;">Evaluated against ISO 25012 & DAMA Data Quality Dimensions</span>
+                    <span style="color:#94a3b8; font-size:0.85rem;">Project-defined rule score; does not certify accuracy or finality</span>
                 </div>
                 <div>
-                    <span class="badge badge-pass" style="font-size:1.2rem; padding:0.4rem 1rem;">Grade: {scorecard['grade']}</span>
+                    <span class="badge {'badge-error' if scorecard['error_count'] or scorecard['grade'] == 'F' else 'badge-warn' if scorecard['warning_count'] else 'badge-pass'}" style="font-size:1.2rem; padding:0.4rem 1rem;">Grade: {scorecard['grade']}</span>
                 </div>
             </div>
             <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-top:1.2rem;">
@@ -1340,7 +1341,7 @@ elif page == "🛡️ Data Quality & Freshness":
 
     # Download Audit Report Button
     st.markdown("### 📄 Download Formal Quality Audit Report")
-    audit_report_md = generate_markdown_audit_report(latest_run, findings, scorecard, audit_ind.name)
+    audit_report_md = generate_markdown_audit_report(latest_run, findings, scorecard, audit_ind.name, indicator=audit_ind)
     st.download_button(
         "📥 Download Markdown Audit Report",
         data=audit_report_md,
@@ -1356,7 +1357,7 @@ elif page == "🛡️ Data Quality & Freshness":
 elif page == "📑 Audit Reports & Data Export":
     st.markdown('<div class="brand-title">📑 Audit Reports & Data Export Center</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="brand-subtitle">Download machine-readable public datasets, generate formal ISO 25012-compliant statistical audit reports, '
+        '<div class="brand-subtitle">Download machine-readable public datasets, generate statistical quality reports, '
         'and inspect retroactive data revisions between official ingestion runs.</div>',
         unsafe_allow_html=True,
     )
@@ -1453,7 +1454,7 @@ elif page == "📑 Audit Reports & Data Export":
 
     with tab_exp_rep:
         st.markdown("### 📄 Formal Quality Audit Report Generator")
-        st.caption("Generate complete ISO 25012-aligned audit certificates detailing data provenance, dimension validity, quality findings, and scorecards.")
+        st.caption("Generate reports documenting data provenance, configured checks, findings, and heuristic scores. These are not standards certifications.")
 
         rep_ind_name = st.selectbox("Select Indicator for Formal Audit", options=list(catalog_by_name.keys()), index=0, key="rep_ind_select")
         rep_ind = catalog_by_name[rep_ind_name]
@@ -1465,7 +1466,7 @@ elif page == "📑 Audit Reports & Data Export":
             if rep_details:
                 known_gaps = getattr(rep_ind, "known_missing_periods", {})
                 scorecard = calculate_quality_scorecard(rep_details["observations"], rep_details["findings"], rep_ind.start_year, known_missing_periods=known_gaps)
-                audit_md = generate_markdown_audit_report(latest_r, rep_details["findings"], scorecard, rep_ind.name)
+                audit_md = generate_markdown_audit_report(latest_r, rep_details["findings"], scorecard, rep_ind.name, indicator=rep_ind)
 
                 st.download_button(
                     f"📥 Download Official Audit Report ({rep_ind.indicator_id}.md)",

@@ -442,3 +442,118 @@ def test_calculate_indicator_correlation_matrix(tmp_path: Any) -> None:
     # Perfect positive correlation 1.0
     assert res["correlation_matrix"][0][0] == 1.0
     assert res["correlation_matrix"][0][1] == 1.0
+
+
+
+
+@pytest.mark.parametrize(('indicator_id', 'value', 'expected'), [
+    ('energy_consumption', 16.34, '16.34 MTOE'),
+    ('gdp_nominal', 248353.7, '€248,353.7 M'),
+    ('ghg_emissions', 68805.23, '68,805.2 kt'),
+    ('life_expectancy', 81.9, '81.9 yrs'),
+    ('house_price_index', 178.39, '178.39'),
+])
+def test_format_full_catalog_units(indicator_id, value, expected):
+    from greek_data_monitor.catalog import CATALOG_BY_ID
+    from greek_data_monitor.dashboard_service import format_indicator_value
+    indicator = CATALOG_BY_ID[indicator_id]
+    assert format_indicator_value(value, indicator.unit, indicator.unit_short) == expected
+
+
+@pytest.mark.parametrize(('previous', 'latest', 'metric', 'value', 'unit'), [
+    (3.0, 2.9, 'percentage_points', -0.1, 'pp'),
+    (10.1, 8.9, 'percentage_points', -1.2, 'pp'),
+    (154.2, 146.1, 'percentage_points', -8.1, 'pp'),
+    (0.0, 1.2, 'percentage_points', 1.2, 'pp'),
+    (100.0, 110.0, 'relative_percent', 10.0, '%'),
+    (-2.0, -1.0, 'relative_percent', 50.0, '%'),
+    (0.0, 1.0, 'relative_percent', None, '%'),
+    (1e-8, 1.0, 'relative_percent', None, '%'),
+    (100.0, 110.0, 'disabled', None, '%'),
+    (None, 110.0, 'relative_percent', None, '%'),
+    (100.0, float('inf'), 'relative_percent', None, '%'),
+])
+def test_annual_change_metrics(previous, latest, metric, value, unit):
+    from greek_data_monitor.dashboard_service import calculate_annual_change
+    from greek_data_monitor.ingestion import Observation
+    change = calculate_annual_change(Observation(2025, latest), Observation(2024, previous), metric)
+    assert change['unit'] == unit
+    if value is None:
+        assert change['value'] is None
+        assert change['display'] == '—'
+    else:
+        assert change['value'] == pytest.approx(value)
+        assert unit in change['display']
+
+
+def test_annual_change_does_not_bridge_missing_years():
+    from greek_data_monitor.dashboard_service import calculate_annual_change
+    from greek_data_monitor.ingestion import Observation
+    assert calculate_annual_change(Observation(2025, 120), Observation(2023, 100))['value'] is None
+
+
+def test_source_status_preserves_combined_flags_and_uncertainty():
+    from greek_data_monitor.dashboard_service import format_source_status
+    assert format_source_status('ep') == 'Estimated · Provisional'
+    assert format_source_status('p') == 'Provisional'
+    assert format_source_status(None) == 'Stored · No source flag'
+    assert format_source_status(None, False) == 'No data'
+
+
+def test_retrieval_age_uses_elapsed_time_not_year_string():
+    from datetime import datetime, timezone
+    from greek_data_monitor.dashboard_service import format_check_age
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    assert format_check_age('2026-10-18T11:00:00Z', now) == 'Checked <24h ago'
+    assert format_check_age('2026-10-17T12:00:00Z', now) == 'Checked 1 day ago'
+    assert format_check_age('2026-10-15T12:00:00', now) == 'Checked 3 days ago'
+    assert format_check_age('2026-10-19T12:00:00Z', now) == 'Future check timestamp'
+    assert format_check_age('invalid', now) == 'Unknown check time'
+    assert format_check_age(None, now) == 'Not checked'
+
+
+def test_overview_uses_catalog_change_metric_and_source_flag(tmp_path):
+    from greek_data_monitor.catalog import CATALOG_BY_ID
+    from greek_data_monitor.dashboard_service import get_overview_kpis, get_what_changed_summary
+    from greek_data_monitor.ingestion import Observation
+    from greek_data_monitor.store import save_run
+    db_url = f"sqlite:///{tmp_path / 'rates.db'}"
+    indicator = CATALOG_BY_ID['inflation_rate']
+    save_run(db_url, [Observation(2024, 3.0), Observation(2025, 2.9, source_status='p')], [], series_id=indicator.series_id)
+    kpi = next(k for k in get_overview_kpis(db_url) if k['indicator_id'] == indicator.indicator_id)
+    assert kpi['change_value'] == pytest.approx(-0.1)
+    assert kpi['change_unit'] == 'pp'
+    assert kpi['change_display'] == '-0.10 pp'
+    assert kpi['data_status'] == 'Provisional'
+    narrative = get_what_changed_summary(db_url)[0]['narrative']
+    assert '-0.10 pp' in narrative
+    assert '-3.3%' not in narrative
+    assert 'Provisional' in narrative
+
+
+def test_audit_report_uses_selected_indicator_metadata():
+    from greek_data_monitor.catalog import CATALOG_BY_ID
+    indicator = CATALOG_BY_ID['energy_consumption']
+    score = calculate_quality_scorecard([{'period': 2024, 'value': 16.34}], [], min_year=indicator.start_year)
+    report = generate_markdown_audit_report({'id': 1, 'series_id': indicator.series_id}, [], score, indicator.name, indicator=indicator)
+    assert indicator.dataset_code in report
+    assert indicator.api_url in report
+    assert f'**Configured Coverage Start:** {indicator.start_year}' in report
+    assert 'nama_10_gdp' not in report
+    assert 'not ISO certification' in report
+
+
+def test_score_without_active_observations_does_not_claim_perfect_quality():
+    score = calculate_quality_scorecard([{'period': 1990, 'value': None}], [], min_year=2000)
+    assert score['overall_score'] == 0
+    assert score['grade'] == 'F'
+    assert score['completeness_score'] == 0
+
+
+def test_provisional_filter_includes_combined_source_flags():
+    observations = [
+        {'period': 2023, 'value': 150.0, 'source_status': 'e'},
+        {'period': 2024, 'value': 165.0, 'source_status': 'p'},
+        {'period': 2025, 'value': 178.0, 'source_status': 'ep'},
+    ]
+    assert [o['period'] for o in filter_and_sort_observations(observations, status_filter='Provisional only')] == [2024, 2025]

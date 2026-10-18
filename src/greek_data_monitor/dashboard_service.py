@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 
 def format_gdp_value(value: float | None) -> str:
     """Format numeric GDP in million euros for display."""
-    if value is None:
+    if value is None or not isfinite(value):
         return "— (Missing)"
     return f"€{value:,.1f} M"
 
@@ -16,11 +18,11 @@ def format_indicator_value(
     unit_short: str = "",
 ) -> str:
     """Format any numeric indicator value appropriately based on its unit and magnitude."""
-    if value is None:
+    if value is None or not isfinite(value):
         return "— (Missing)"
 
     u_lower = (unit + " " + unit_short).lower()
-    if "meur" in u_lower or "million" in u_lower or "€m" in u_lower:
+    if "meur" in u_lower or "€m" in u_lower or ("million" in u_lower and "euro" in u_lower):
         return f"€{value:,.1f} M"
     elif "%" in u_lower or "pc" in u_lower or "rate" in u_lower or "yield" in u_lower:
         return f"{value:.2f}%"
@@ -40,6 +42,60 @@ def format_indicator_value(
         return f"{value:.2f}"
     else:
         return f"{value:,.2f}"
+
+
+def calculate_annual_change(latest: Any, previous: Any, metric: str = "relative_percent") -> dict[str, Any]:
+    """Use consecutive years and the indicator's declared change metric."""
+    unit = "pp" if metric == "percentage_points" else "%"
+    result = {"value": None, "unit": unit, "display": "—"}
+    if metric == "disabled" or latest is None or previous is None:
+        return result
+    if latest.period != previous.period + 1:
+        return result
+    if any(o.value is None or not isfinite(o.value) for o in (latest, previous)):
+        return result
+    difference = latest.value - previous.value
+    if metric == "percentage_points":
+        value = difference
+    elif abs(previous.value) < 1e-6:
+        return result
+    else:
+        value = difference / abs(previous.value) * 100.0
+    # Preserve small changes instead of displaying a misleading signed zero.
+    precision = 2 if abs(value) >= 0.01 or value == 0 else 4
+    result.update(value=value, display=f"{value:+.{precision}f} {unit}")
+    return result
+
+
+def format_source_status(status: str | None, has_data: bool = True) -> str:
+    """Source flags describe maturity; absence of a flag does not certify finality."""
+    if not has_data:
+        return "No data"
+    if not status or not status.strip():
+        return "Stored · No source flag"
+    labels = {"p": "Provisional", "e": "Estimated", "b": "Series break",
+              "u": "Low reliability", "c": "Confidential", "d": "Definition differs", "z": "Not applicable"}
+    return " · ".join(labels.get(flag, f"Flag {flag}") for flag in dict.fromkeys(status.replace(" ", "")))
+
+
+def format_check_age(checked_at: str | None, now: datetime | None = None) -> str:
+    """Describe retrieval age without claiming the reference period is current."""
+    if not checked_at:
+        return "Not checked"
+    try:
+        checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        age = (current - checked).total_seconds()
+    except (ValueError, TypeError):
+        return "Unknown check time"
+    if age < 0:
+        return "Future check timestamp"
+    if age < 86400:
+        return "Checked <24h ago"
+    days = int(age // 86400)
+    return f"Checked {days} day{'s' if days != 1 else ''} ago"
 
 
 def get_flag_descriptions() -> dict[str, str]:
@@ -76,16 +132,16 @@ def get_quality_rule_descriptions() -> dict[str, dict[str, str]]:
         "not_null": {
             "name": "Active Series Completeness",
             "default_severity": "ERROR",
-            "plain_explanation": "Checks that periods within active official coverage (1995 to present) contain valid numeric data.",
+            "plain_explanation": "Checks for missing values within the indicator's configured coverage, excluding documented structural gaps.",
             "why_it_matters": "Unexpected missing values in recent years indicate publication delays or incomplete API responses.",
             "review_guidance": "Confirm if Eurostat has delayed the release or if an unexpected data suppression flag is present.",
         },
         "pre_series_coverage": {
             "name": "Pre-Coverage Historical Context",
             "default_severity": "INFO",
-            "plain_explanation": "Documents periods prior to 1995 where Eurostat tables return empty missing markers (':').",
-            "why_it_matters": "Provides statistical transparency so users know why pre-1995 columns do not contain numbers.",
-            "review_guidance": "Expected behavior: Greek ESA 2010 annual GDP in current prices officially begins in 1995.",
+            "plain_explanation": "Documents missing periods before the indicator's configured coverage start.",
+            "why_it_matters": "Separates unavailable historical coverage from missing observations within the monitored period.",
+            "review_guidance": "Check this indicator's coverage start and source methodology.",
         },
         "known_structural_gap": {
             "name": "Documented Structural Survey Gap",
@@ -97,7 +153,7 @@ def get_quality_rule_descriptions() -> dict[str, dict[str, str]]:
         "year_over_year_change": {
             "name": "Year-over-Year Volatility Check",
             "default_severity": "WARN",
-            "plain_explanation": "Flags consecutive annual changes exceeding the configured threshold (default ±30%) for human review.",
+            "plain_explanation": "Flags consecutive annual changes above the indicator's threshold, using percentage points for rates and relative percentages for levels.",
             "why_it_matters": "Extreme macro swings are rare under normal conditions and warrant verification against known economic events.",
             "review_guidance": "Heuristic review flag only, NOT an assertion of data error. Structural shocks (e.g. 2008 crisis, 2020 pandemic) cause legitimate swings.",
         },
@@ -119,7 +175,7 @@ def get_quality_rule_descriptions() -> dict[str, dict[str, str]]:
             "name": "All Rules Satisfied",
             "default_severity": "PASS",
             "plain_explanation": "Indicates that all evaluated observations met every configured quality check.",
-            "why_it_matters": "Confirms data integrity and readiness for downstream reporting.",
+            "why_it_matters": "Records that the configured checks found no issues; this does not certify factual accuracy or final publication status.",
             "review_guidance": "No action required.",
         },
     }
@@ -259,7 +315,7 @@ def filter_and_sort_observations(
             continue
         elif status_filter == "Missing values only" and val is not None:
             continue
-        elif status_filter == "Provisional only" and flag != "p":
+        elif status_filter == "Provisional only" and "p" not in flag:
             continue
         elif status_filter == "Flagged only" and not flag:
             continue
@@ -289,7 +345,7 @@ def calculate_quality_scorecard(
     min_year: int = 1995,
     known_missing_periods: dict[int, str] | list[int] | set[int] | None = None,
 ) -> dict[str, Any]:
-    """Calculate ISO 25012 / DAMA data quality dimension scores and composite grade."""
+    """Calculate a project-defined heuristic score, not a standards certification."""
     total_obs = len(observations)
     if total_obs == 0:
         return {
@@ -301,6 +357,8 @@ def calculate_quality_scorecard(
             "plausibility_score": 0.0,
             "error_count": 0,
             "warning_count": 0,
+            "active_period_count": 0,
+            "coverage_start_year": min_year,
         }
 
     # 1. Completeness: active series coverage (>= min_year) excluding documented structural gaps
@@ -317,7 +375,7 @@ def calculate_quality_scorecard(
         numeric_active = sum(1 for o in active_obs if o.get("value") is not None)
         completeness = round((numeric_active / len(active_obs)) * 100.0, 1)
     else:
-        completeness = 100.0
+        completeness = 0.0
 
     # 2. Validity & Uniqueness penalties based on error findings
     invalid_periods = sum(1 for f in findings if f.get("rule") == "valid_period")
@@ -339,6 +397,8 @@ def calculate_quality_scorecard(
     )
     if err_count > 0:
         composite = min(composite, 65.0)  # Cap if critical errors exist
+    if not active_obs:
+        composite = 0.0
 
     if composite >= 95.0:
         grade = "A+"
@@ -361,6 +421,7 @@ def calculate_quality_scorecard(
         "error_count": err_count,
         "warning_count": warn_count,
         "active_period_count": len(active_obs),
+        "coverage_start_year": min_year,
     }
 
 
@@ -415,12 +476,19 @@ def generate_markdown_audit_report(
     findings: list[dict[str, Any]],
     scorecard: dict[str, Any],
     series_name: str,
+    indicator: Any = None,
 ) -> str:
     """Generate a downloadable executive data quality audit report in Markdown format."""
     run_id = run_dict.get("id", "N/A")
     checked_at = run_dict.get("checked_at", "")[:19].replace("T", " ")
     status = run_dict.get("status", "PASS")
     obs_count = run_dict.get("observation_count", 0)
+    if indicator is None:
+        from .catalog import CATALOG_BY_SERIES_ID
+        indicator = CATALOG_BY_SERIES_ID.get(run_dict.get("series_id", ""))
+    dataset = getattr(indicator, "dataset_code", None) or run_dict.get("series_id") or "Not recorded"
+    source_url = getattr(indicator, "api_url", "")
+    start_year = getattr(indicator, "start_year", scorecard.get("coverage_start_year", "Not recorded"))
 
     report = f"""# Official Data Quality Audit Report: Greece Public Statistics
 
@@ -433,10 +501,11 @@ def generate_markdown_audit_report(
 ---
 
 ## 1. Executive Summary
-This audit report was automatically compiled by the Greek Public Data Quality Monitor. The monitored indicator has been evaluated against ISO 25012 and DAMA statistical quality dimensions.
+This report applies project-defined checks for completeness, calendar validity, uniqueness, and unusual changes. The score is a heuristic, not ISO certification or proof of factual accuracy. Provisional and estimated source values may be revised.
 
 - **Total Observations Analyzed:** {obs_count}
-- **Active Coverage Periods (≥ 1995):** {scorecard.get('active_period_count', 0)}
+- **Configured Coverage Start:** {start_year}
+- **Active Coverage Periods Evaluated:** {scorecard.get('active_period_count', 0)}
 - **Errors Detected:** {scorecard.get('error_count', 0)}
 - **Review Warnings:** {scorecard.get('warning_count', 0)}
 
@@ -460,11 +529,12 @@ This audit report was automatically compiled by the Greek Public Data Quality Mo
         p_str = str(f.get("period")) if f.get("period") is not None else "All"
         report += f"| {f.get('severity')} | `{f.get('rule')}` | {p_str} | {f.get('message')} |\n"
 
-    report += """
+    report += f"""
 ---
 
 ## 4. Methodology & Disclaimer
-- **Data Source:** Eurostat Dissemination API (`nama_10_gdp`).
+- **Data Source:** Eurostat Dissemination API (`{dataset}`).
+- **Source URL:** {source_url or 'Not recorded'}
 - **Heuristic Boundaries:** Percentage changes are review heuristics, not proof that official statistics are inaccurate. Macroeconomic shocks and statistical revisions legitimately alter historical series.
 - **Licensing:** Free reuse subject to Eurostat open data reuse policy.
 """
@@ -602,16 +672,15 @@ def get_overview_kpis(database_url: str, headline_only: bool = False) -> list[di
             continue
 
         obs = get_latest_observations(database_url, ind.series_id)
-        valid_obs = [o for o in obs if o.value is not None]
+        valid_obs = [o for o in obs if o.value is not None and isfinite(o.value)]
 
         latest = valid_obs[-1] if valid_obs else None
         prev = valid_obs[-2] if len(valid_obs) >= 2 else None
 
-        yoy_pct: float | None = None
-        yoy_abs: float | None = None
-        if latest and prev and prev.value is not None and prev.value != 0:
-            yoy_abs = latest.value - prev.value
-            yoy_pct = (yoy_abs / abs(prev.value)) * 100.0
+        change = calculate_annual_change(latest, prev, ind.change_metric)
+        relative_change = calculate_annual_change(latest, prev)
+        yoy_pct = relative_change["value"]
+        yoy_abs = latest.value - prev.value if change["value"] is not None else None
 
         formatted_val = format_indicator_value(
             latest.value if latest else None,
@@ -633,6 +702,11 @@ def get_overview_kpis(database_url: str, headline_only: bool = False) -> list[di
                 "latest_value": latest.value if latest else None,
                 "formatted_value": formatted_val,
                 "source_status": latest.source_status if latest else None,
+                "data_status": format_source_status(latest.source_status if latest else None, latest is not None),
+                "change_metric": ind.change_metric,
+                "change_value": change["value"],
+                "change_unit": change["unit"],
+                "change_display": change["display"],
                 "prev_period": prev.period if prev else None,
                 "prev_value": prev.value if prev else None,
                 "yoy_change_pct": round(yoy_pct, 2) if yoy_pct is not None else None,
@@ -653,10 +727,10 @@ def get_what_changed_summary(database_url: str) -> list[dict[str, Any]]:
     changes: list[dict[str, Any]] = []
 
     for k in kpis:
-        if not k["has_data"] or k["yoy_change_pct"] is None:
+        if not k["has_data"] or k["change_value"] is None:
             continue
 
-        pct = k["yoy_change_pct"]
+        pct = k["change_value"]
         period = k["latest_period"]
         prev_p = k["prev_period"]
         name = k["name"]
@@ -664,23 +738,19 @@ def get_what_changed_summary(database_url: str) -> list[dict[str, Any]]:
         val_str = k["formatted_value"]
 
         # Plain language assessment
-        if abs(pct) >= 15.0:
+        from .catalog import CATALOG_BY_ID
+        threshold = CATALOG_BY_ID[k["indicator_id"]].yoy_threshold
+        if abs(pct) >= threshold:
             impact = "High Shift"
             badge = "WARN"
-        elif abs(pct) >= 5.0:
+        elif abs(pct) >= threshold / 2:
             impact = "Moderate Move"
             badge = "INFO"
         else:
             impact = "Stable Trend"
             badge = "PASS"
 
-        direction = "increased" if pct > 0 else "decreased"
-        sign = "+" if pct > 0 else ""
-
-        narrative = (
-            f"{name} reached {val_str} in {period}, having {direction} by {sign}{pct:.1f}% "
-            f"compared to {prev_p}."
-        )
+        narrative = f"{name} reached {val_str} in {period}. Annual change: {k['change_display']} compared to {prev_p}. Source status: {k['data_status']}."
 
         changes.append(
             {
@@ -689,13 +759,15 @@ def get_what_changed_summary(database_url: str) -> list[dict[str, Any]]:
                 "indicator": name,
                 "period": period,
                 "change_pct": pct,
+                "change_unit": k["change_unit"],
+                "threshold_ratio": abs(pct) / threshold if threshold > 0 else 0,
                 "impact": impact,
                 "badge": badge,
                 "narrative": narrative,
             }
         )
 
-    return sorted(changes, key=lambda c: abs(c["change_pct"]), reverse=True)
+    return sorted(changes, key=lambda c: c["threshold_ratio"], reverse=True)
 
 
 def calculate_indicator_correlation_matrix(
