@@ -572,8 +572,16 @@ elif page == "🔍 Explore Data":
     kpi_cols[2].metric("Measurement Unit", current_ind.unit_short, current_ind.frequency)
     kpi_cols[3].metric("Official Authority", current_ind.source_name, current_ind.dataset_code)
 
-    st.caption(f"Source status: {format_source_status(valid_obs[-1].source_status if valid_obs else None, bool(valid_obs))}. "
-               f"Retrieved: {valid_obs[-1].retrieved_at if valid_obs else 'Never'}. Annual changes require consecutive reference years.")
+    latest_observation = valid_obs[-1] if valid_obs else None
+    source_status = format_source_status(
+        latest_observation.source_status if latest_observation else None,
+        latest_observation is not None,
+    )
+    retrieved_at = latest_observation.retrieved_at if latest_observation else "Never"
+    st.caption(
+        f"Source status: {source_status}. Retrieved: {retrieved_at}. "
+        "Annual changes require consecutive reference years."
+    )
     st.markdown("---")
 
     # Time-series Chart & Controls
