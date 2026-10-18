@@ -91,10 +91,17 @@ The project centralizes 19 official statistical indicators across six domains.
 Run the application locally:
 
 ```bash
+python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
 Open: `http://localhost:8501`
+
+For Streamlit Community Cloud, select `app.py` as the entrypoint. The root
+`requirements.txt` installs the local `greek_data_monitor` package and its dashboard
+dependencies using the setuptools configuration in `pyproject.toml`. Keep this
+file in the deployment branch so Community Cloud uses it instead of attempting
+to install this setuptools project with Poetry.
 
 The dashboard includes several focused pages:
 
