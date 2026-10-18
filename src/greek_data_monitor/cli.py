@@ -4,7 +4,9 @@ import argparse
 import sys
 from typing import Sequence
 
+from .catalog import CATALOG_BY_ID, CATALOG_BY_SERIES_ID, INDICATOR_CATALOG
 from .config import DEFAULT_SERIES, Settings
+from .dashboard_service import sync_all_indicators
 from .ingestion import IngestionError, fetch_eurostat_series
 from .quality import Finding, inspect
 from .store import get_latest_observations, get_run_details, list_runs, save_run
@@ -15,6 +17,23 @@ def format_finding_line(finding: Finding) -> str:
     period_str = f" [{finding.period}]" if finding.period is not None else ""
     tag = f"[{finding.severity}]"
     return f"  {tag:<8} {finding.rule}{period_str}: {finding.message}"
+
+
+def catalog_command(args: argparse.Namespace) -> int:
+    """Print the central indicator catalog and documented sources."""
+    print("Greek Public Data Quality Monitor — Multi-Topic Indicator Catalog")
+    print(f"Total Configured Indicators: {len(INDICATOR_CATALOG)}")
+    print()
+    header = f"{'Topic':<22} {'Indicator Name':<38} {'Unit':<20} {'Source'}"
+    print(header)
+    print("-" * 105)
+    for ind in INDICATOR_CATALOG:
+        print(
+            f"{ind.topic_icon} {ind.topic:<19} {ind.name[:36]:<38} {ind.unit_short:<20} {ind.source_name}"
+        )
+    print()
+    print("Use 'gdm run --all' to ingest and evaluate all catalog indicators.")
+    return 0
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -37,9 +56,53 @@ def run_command(args: argparse.Namespace) -> int:
         else (int(args.min_year) if args.min_year is not None else settings.min_year)
     )
 
+    # Check if user requested all indicators
+    if getattr(args, "all", False):
+        print("Greek Public Data Quality Monitor — Syncing All Catalog Indicators")
+        print(f"Database: {db_url}")
+        print(f"Total Indicators: {len(INDICATOR_CATALOG)}")
+        print("=" * 70)
+        sync_result = sync_all_indicators(db_url, timeout=timeout)
+        print()
+        print(f"Ingestion Finished: {sync_result['success']} succeeded, {sync_result['failed']} failed")
+        print("-" * 70)
+        for res in sync_result["details"]:
+            status_icon = "✅" if res["status"] == "SUCCESS" else "❌"
+            if res["status"] == "SUCCESS":
+                print(
+                    f"{status_icon} {res['name'][:35]:<36} | Run #{res['run_id']} | "
+                    f"Latest: {res['latest_period']} ({res['latest_value']}) | "
+                    f"Obs: {res['observation_count']}"
+                )
+            else:
+                print(
+                    f"{status_icon} {res['name'][:35]:<36} | FAILED: {res['error_message']}"
+                )
+        return 0 if sync_result["success"] > 0 else 1
+
+    # Determine series to fetch
+    target_series = DEFAULT_SERIES
+    series_name = f"Eurostat {DEFAULT_SERIES.dataset}"
+    target_start_year = min_year
+    target_threshold = threshold
+
+    if getattr(args, "series", None):
+        series_arg = args.series.strip()
+        matched_ind = CATALOG_BY_ID.get(series_arg) or CATALOG_BY_SERIES_ID.get(series_arg)
+        if matched_ind:
+            target_series = matched_ind
+            series_name = f"{matched_ind.name} ({matched_ind.dataset_code})"
+            target_start_year = matched_ind.start_year if min_year is None else min_year
+            target_threshold = matched_ind.yoy_threshold if args.threshold is None else threshold
+        else:
+            print(f"Unknown series or indicator identifier: {series_arg}", file=sys.stderr)
+            print("Run 'gdm catalog' to see available identifiers.", file=sys.stderr)
+            return 1
+
     # 1. Fetch data
+    series_id = getattr(target_series, "series_id", DEFAULT_SERIES.series_id)
     try:
-        observations = fetch_eurostat_series(DEFAULT_SERIES, timeout=timeout)
+        observations = fetch_eurostat_series(target_series, timeout=timeout)
     except IngestionError as exc:
         print(f"Ingestion failed: {exc}", file=sys.stderr)
         return 1
@@ -50,19 +113,20 @@ def run_command(args: argparse.Namespace) -> int:
     # 2. Look up previous snapshot for revision detection
     previous_observations = []
     try:
-        previous_observations = get_latest_observations(
-            db_url, DEFAULT_SERIES.series_id
-        )
-    except Exception as exc:
-        # Non-fatal if database is not yet initialized or empty
+        previous_observations = get_latest_observations(db_url, series_id)
+    except Exception:
         pass
 
     # 3. Inspect quality
+    target_metric = getattr(target_series, "change_metric", "relative_percent")
+    target_missing = getattr(target_series, "known_missing_periods", {})
     findings = inspect(
         observations,
-        threshold_pct=threshold,
+        threshold_pct=target_threshold,
         previous_observations=previous_observations,
-        min_year=min_year,
+        min_year=target_start_year,
+        change_metric=target_metric,
+        known_missing_periods=target_missing,
     )
 
     # 4. Persist run and snapshot
@@ -71,7 +135,7 @@ def run_command(args: argparse.Namespace) -> int:
             database_url=db_url,
             observations=observations,
             findings=findings,
-            series_id=DEFAULT_SERIES.series_id,
+            series_id=series_id,
         )
     except Exception as exc:
         print(f"Database persistence failed: {exc}", file=sys.stderr)
@@ -88,10 +152,7 @@ def run_command(args: argparse.Namespace) -> int:
 
     print(f"Greek Public Data Quality Monitor — Run #{run_id}")
     print(f"Status: {run_status} ({error_count} error(s), {warn_count} warning(s))")
-    print(
-        f"Series: Eurostat {DEFAULT_SERIES.dataset} | geo={DEFAULT_SERIES.dimensions.get('geo')} | "
-        f"item={DEFAULT_SERIES.dimensions.get('na_item')} | unit={DEFAULT_SERIES.unit}"
-    )
+    print(f"Series: {series_name} | series_id={series_id}")
     print(
         f"Observations: {len(observations)} total ({numeric_count} numeric, "
         f"{missing_count} missing, {flagged_count} with status flags)"
@@ -164,10 +225,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # 'catalog' subcommand
+    subparsers.add_parser(
+        "catalog",
+        help="List all supported indicators across Economy, Society, Energy, Tourism, Housing, Finance",
+    )
+
     # 'run' subcommand
     run_parser = subparsers.add_parser(
         "run",
         help="Fetch Eurostat series, run quality checks, and record snapshot",
+    )
+    run_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Ingest and run quality checks for all configured catalog indicators",
+    )
+    run_parser.add_argument(
+        "--series",
+        dest="series",
+        default=None,
+        help="Specific indicator ID or series ID to ingest (default: Nominal GDP)",
     )
     run_parser.add_argument(
         "--db-url",
@@ -180,13 +258,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="threshold",
         type=float,
         default=None,
-        help="Year-over-year percentage change warning threshold (default: 30.0)",
+        help="Year-over-year percentage change warning threshold (default: series-specific or 30.0)",
     )
     run_parser.add_argument(
         "--min-year",
         dest="min_year",
         default=None,
-        help="Minimum expected year for active series (default: 1995, or 'none')",
+        help="Minimum expected year for active series (default: series-specific, or 'none')",
     )
     run_parser.add_argument(
         "--timeout",
@@ -235,6 +313,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         exit_code = run_command(args)
     elif args.command in ("history", "runs"):
         exit_code = history_command(args)
+    elif args.command == "catalog":
+        exit_code = catalog_command(args)
     else:
         parser.print_help()
         exit_code = 1

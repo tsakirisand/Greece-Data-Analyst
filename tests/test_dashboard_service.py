@@ -188,3 +188,257 @@ def test_generate_markdown_audit_report() -> None:
     assert "98.5/100" in md
     assert "A+" in md
 
+
+def test_format_indicator_value() -> None:
+    from greek_data_monitor.dashboard_service import format_indicator_value
+
+    assert format_indicator_value(None) == "— (Missing)"
+    assert format_indicator_value(248353.7, unit="CP_MEUR", unit_short="€M") == "€248,353.7 M"
+    assert format_indicator_value(8.9, unit="PC_ACT", unit_short="%") == "8.90%"
+    assert format_indicator_value(81.9, unit="YR", unit_short="years") == "81.9 yrs"
+    assert format_indicator_value(10372335.0, unit="NR", unit_short="pers.") == "10.37 M"
+    assert format_indicator_value(132149.0, unit="NR", unit_short="pers.") == "132,149"
+    assert format_indicator_value(16.34, unit="MTOE", unit_short="MTOE") == "16.34 MTOE"
+    assert format_indicator_value(68805.23, unit="THS_T", unit_short="kt CO2e") == "68,805.2 kt"
+    assert format_indicator_value(178.39, unit="I15_A_AVG", unit_short="idx") == "178.39"
+
+
+def test_calculate_safe_comparison_compatible_units() -> None:
+    from greek_data_monitor.dashboard_service import calculate_safe_comparison
+
+    obs_a = [{"period": 2020, "value": 17.6}, {"period": 2021, "value": 14.8}]
+    obs_b = [{"period": 2020, "value": 15.5}, {"period": 2021, "value": 14.8}]
+    meta_a = {"name": "Unemployment", "unit_short": "%"}
+    meta_b = {"name": "Youth Unemployment", "unit_short": "%"}
+
+    res = calculate_safe_comparison(obs_a, meta_a, obs_b, meta_b)
+    assert res["compatible_raw"] is True
+    assert res["requires_indexing"] is False
+    assert len(res["data"]) == 2
+    assert "Matching units" in res["message"]
+
+
+def test_calculate_safe_comparison_incompatible_units_triggers_indexing() -> None:
+    from greek_data_monitor.dashboard_service import calculate_safe_comparison
+
+    obs_a = [{"period": 2020, "value": 167539.5}, {"period": 2021, "value": 184574.6}]
+    obs_b = [{"period": 2020, "value": 17.6}, {"period": 2021, "value": 14.8}]
+    meta_a = {"name": "GDP", "unit_short": "€M"}
+    meta_b = {"name": "Unemployment", "unit_short": "%"}
+
+    res = calculate_safe_comparison(obs_a, meta_a, obs_b, meta_b)
+    assert res["compatible_raw"] is False
+    assert res["requires_indexing"] is True
+    assert len(res["data"]) == 2
+    assert res["data"][0]["index_a"] == 100.0
+    assert res["data"][0]["index_b"] == 100.0
+    assert res["data"][1]["index_a"] > 100.0
+    assert res["data"][1]["index_b"] < 100.0
+    assert "re-indexed (Base 2020 = 100)" in res["message"]
+
+
+def test_calculate_quality_scorecard_with_known_missing_periods() -> None:
+    obs = [
+        {"period": 2001, "value": 20.0},
+        {"period": 2002, "value": None},  # Documented EU-SILC gap
+        {"period": 2003, "value": 20.7},
+    ]
+    findings = [
+        {"severity": "INFO", "rule": "known_structural_gap", "period": 2002, "message": "Documented EU-SILC gap"},
+    ]
+    card = calculate_quality_scorecard(
+        obs,
+        findings,
+        min_year=1995,
+        known_missing_periods={2002: "Documented EU-SILC transition gap"},
+    )
+    # The known gap should NOT penalize completeness or count as an error
+    assert card["completeness_score"] == 100.0
+    assert card["error_count"] == 0
+    assert card["overall_score"] == 100.0
+    assert card["grade"] == "A+"
+
+
+def test_calculate_safe_comparison_zero_and_near_zero_base_values() -> None:
+    from greek_data_monitor.dashboard_service import calculate_safe_comparison
+
+    # Base year 2020 has 0.0 for series B
+    obs_a = [{"period": 2020, "value": 100.0}, {"period": 2021, "value": 120.0}]
+    obs_b_zero = [{"period": 2020, "value": 0.0}, {"period": 2021, "value": 10.0}]
+    meta_a = {"name": "GDP", "unit_short": "€M"}
+    meta_b = {"name": "Emissions", "unit_short": "kt"}
+
+    res = calculate_safe_comparison(obs_a, meta_a, obs_b_zero, meta_b, base_year=2020)
+    assert res["requires_indexing"] is True
+    assert res["indexing_disabled"] is True
+    assert "zero" in res["message"].lower()
+    assert res["error_explanation"] is not None
+    # Data is still returned without crash
+    assert len(res["data"]) == 2
+    assert res["data"][0]["index_a"] is None
+    assert res["data"][0]["index_b"] is None
+
+    # Base year 2020 has near-zero (1e-8) for series A
+    obs_a_near_zero = [{"period": 2020, "value": 1e-8}, {"period": 2021, "value": 5.0}]
+    obs_b = [{"period": 2020, "value": 10.0}, {"period": 2021, "value": 12.0}]
+    res_near = calculate_safe_comparison(obs_a_near_zero, meta_a, obs_b, meta_b, base_year=2020)
+    assert res_near["indexing_disabled"] is True
+    assert "near-zero" in res_near["message"].lower()
+
+
+def test_calculate_safe_comparison_missing_and_non_finite_base_values() -> None:
+    import math
+    from greek_data_monitor.dashboard_service import calculate_safe_comparison
+
+    meta_a = {"name": "Series A", "unit_short": "A"}
+    meta_b = {"name": "Series B", "unit_short": "B"}
+
+    # Base value is None (missing)
+    obs_a_none = [{"period": 2020, "value": None}, {"period": 2021, "value": 10.0}]
+    obs_b = [{"period": 2020, "value": 50.0}, {"period": 2021, "value": 60.0}]
+    res_none = calculate_safe_comparison(obs_a_none, meta_a, obs_b, meta_b, base_year=2020)
+    assert res_none["indexing_disabled"] is True
+    assert "missing" in res_none["message"].lower()
+
+    # Base value is NaN
+    obs_a_nan = [{"period": 2020, "value": float("nan")}, {"period": 2021, "value": 10.0}]
+    res_nan = calculate_safe_comparison(obs_a_nan, meta_a, obs_b, meta_b, base_year=2020)
+    assert res_nan["indexing_disabled"] is True
+    assert "non-finite" in res_nan["message"].lower()
+
+    # Base value is Inf
+    obs_b_inf = [{"period": 2020, "value": float("inf")}, {"period": 2021, "value": 60.0}]
+    obs_a = [{"period": 2020, "value": 100.0}, {"period": 2021, "value": 110.0}]
+    res_inf = calculate_safe_comparison(obs_a, meta_a, obs_b_inf, meta_b, base_year=2020)
+    assert res_inf["indexing_disabled"] is True
+    assert "non-finite" in res_inf["message"].lower()
+
+
+def test_calculate_safe_comparison_compatible_units_remains_available_with_zero() -> None:
+    from greek_data_monitor.dashboard_service import calculate_safe_comparison
+
+    # When units match, raw comparison is available even if a value is 0.0
+    obs_a = [{"period": 2020, "value": 0.0}, {"period": 2021, "value": 2.5}]
+    obs_b = [{"period": 2020, "value": 1.0}, {"period": 2021, "value": 3.0}]
+    meta_a = {"name": "Inflation", "unit_short": "%"}
+    meta_b = {"name": "Target", "unit_short": "%"}
+
+    res = calculate_safe_comparison(obs_a, meta_a, obs_b, meta_b, base_year=2020)
+    assert res["compatible_raw"] is True
+    assert res["requires_indexing"] is False
+    assert len(res["data"]) == 2
+    assert "Matching units" in res["message"]
+
+
+
+def test_sync_all_indicators_independent_failure(tmp_path: Any) -> None:
+    from unittest.mock import MagicMock, patch
+    from greek_data_monitor.catalog import IndicatorDefinition
+    from greek_data_monitor.dashboard_service import sync_all_indicators
+    from greek_data_monitor.ingestion import IngestionError, Observation
+
+    db_url = f"sqlite:///{tmp_path / 'sync_test.db'}"
+
+    mock_inds = [
+        IndicatorDefinition(
+            indicator_id="ind_ok",
+            series_id="eurostat.test.ok",
+            name="Working Series",
+            topic="Economy",
+            topic_icon="🏛️",
+            unit="EUR",
+            unit_short="€",
+            frequency="Annual",
+            source_name="Eurostat",
+            source_url="http://example.com",
+            api_url="http://example.com/api",
+            dataset_code="test_ok",
+            series_key="A.EUR.EL",
+            dimensions={},
+            description="desc",
+            methodology="meth",
+            limitations="none",
+        ),
+        IndicatorDefinition(
+            indicator_id="ind_err",
+            series_id="eurostat.test.fail",
+            name="Failing Series",
+            topic="Energy & Environment",
+            topic_icon="⚡",
+            unit="KW",
+            unit_short="kW",
+            frequency="Annual",
+            source_name="Eurostat",
+            source_url="http://example.com",
+            api_url="http://example.com/fail_api",
+            dataset_code="test_fail",
+            series_key="A.KW.EL",
+            dimensions={},
+            description="desc",
+            methodology="meth",
+            limitations="none",
+        ),
+    ]
+
+    def mock_fetch(series: Any, timeout: int = 30) -> list[Observation]:
+        if series.indicator_id == "ind_ok":
+            return [Observation(2021, 100.0), Observation(2022, 105.0)]
+        raise IngestionError("Upstream service timed out")
+
+    with patch("greek_data_monitor.ingestion.fetch_eurostat_series", side_effect=mock_fetch):
+        res = sync_all_indicators(db_url, indicators=mock_inds)
+
+    assert res["total"] == 2
+    assert res["success"] == 1
+    assert res["failed"] == 1
+    assert res["details"][0]["status"] == "SUCCESS"
+    assert res["details"][1]["status"] == "ERROR"
+    assert "Upstream service timed out" in res["details"][1]["error_message"]
+
+
+def test_get_overview_kpis_headline_and_all(tmp_path: Any) -> None:
+    from greek_data_monitor.catalog import INDICATOR_CATALOG
+    from greek_data_monitor.dashboard_service import get_overview_kpis
+    from greek_data_monitor.store import init_db
+
+    db_path = tmp_path / "overview_test.db"
+    db_url = f"sqlite:///{db_path}"
+    init_db(db_url)
+
+    # Empty DB
+    all_kpis = get_overview_kpis(db_url, headline_only=False)
+    headline_kpis = get_overview_kpis(db_url, headline_only=True)
+
+    assert len(all_kpis) == len(INDICATOR_CATALOG)
+    assert len(headline_kpis) == 9
+    assert all(k["has_data"] is False for k in all_kpis)
+    assert any(k["is_headline"] is True for k in all_kpis)
+    assert any(k["is_headline"] is False for k in all_kpis)
+
+
+def test_calculate_indicator_correlation_matrix(tmp_path: Any) -> None:
+    from greek_data_monitor.dashboard_service import calculate_indicator_correlation_matrix
+    from greek_data_monitor.ingestion import Observation
+    from greek_data_monitor.store import init_db, save_run
+
+    db_path = tmp_path / "corr_test.db"
+    db_url = f"sqlite:///{db_path}"
+    init_db(db_url)
+
+    # Insert 6 periods for two series
+    obs1 = [Observation(2015 + i, 100.0 + i * 10) for i in range(6)]
+    obs2 = [Observation(2015 + i, 50.0 + i * 5) for i in range(6)]
+
+    save_run(db_url, obs1, [], series_id="eurostat.nama_10_gdp.EL.B1GQ.CP_MEUR")
+    save_run(db_url, obs2, [], series_id="eurostat.une_rt_a.EL.Y15-74.PC_ACT.T")
+
+    res = calculate_indicator_correlation_matrix(
+        db_url,
+        indicator_ids=["gdp_nominal", "unemployment_rate"],
+        min_periods=5,
+    )
+    assert len(res["indicators"]) == 2
+    assert res["common_periods_count"] == 6
+    # Perfect positive correlation 1.0
+    assert res["correlation_matrix"][0][0] == 1.0
+    assert res["correlation_matrix"][0][1] == 1.0

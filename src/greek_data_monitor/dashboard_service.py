@@ -10,6 +10,38 @@ def format_gdp_value(value: float | None) -> str:
     return f"€{value:,.1f} M"
 
 
+def format_indicator_value(
+    value: float | None,
+    unit: str = "",
+    unit_short: str = "",
+) -> str:
+    """Format any numeric indicator value appropriately based on its unit and magnitude."""
+    if value is None:
+        return "— (Missing)"
+
+    u_lower = (unit + " " + unit_short).lower()
+    if "meur" in u_lower or "million" in u_lower or "€m" in u_lower:
+        return f"€{value:,.1f} M"
+    elif "%" in u_lower or "pc" in u_lower or "rate" in u_lower or "yield" in u_lower:
+        return f"{value:.2f}%"
+    elif "year" in u_lower or "yr" in u_lower:
+        return f"{value:.1f} yrs"
+    elif "pers" in u_lower or "nr" in u_lower or "night" in u_lower or "arrival" in u_lower:
+        if abs(value) >= 1_000_000:
+            return f"{value / 1_000_000:.2f} M"
+        elif abs(value) >= 1_000:
+            return f"{value:,.0f}"
+        return f"{value:.0f}"
+    elif "mtoe" in u_lower:
+        return f"{value:.2f} MTOE"
+    elif "co2" in u_lower or "ths_t" in u_lower or "kt" in u_lower:
+        return f"{value:,.1f} kt"
+    elif "idx" in u_lower or "index" in u_lower:
+        return f"{value:.2f}"
+    else:
+        return f"{value:,.2f}"
+
+
 def get_flag_descriptions() -> dict[str, str]:
     """Eurostat observation status flags and missing markers documentation."""
     return {
@@ -54,6 +86,13 @@ def get_quality_rule_descriptions() -> dict[str, dict[str, str]]:
             "plain_explanation": "Documents periods prior to 1995 where Eurostat tables return empty missing markers (':').",
             "why_it_matters": "Provides statistical transparency so users know why pre-1995 columns do not contain numbers.",
             "review_guidance": "Expected behavior: Greek ESA 2010 annual GDP in current prices officially begins in 1995.",
+        },
+        "known_structural_gap": {
+            "name": "Documented Structural Survey Gap",
+            "default_severity": "INFO",
+            "plain_explanation": "Documents known, officially published survey transitions or methodology breaks (e.g. EU-SILC 2002 transition).",
+            "why_it_matters": "Distinguishes officially documented statistical breaks from pipeline ingestion errors.",
+            "review_guidance": "Expected official behavior documented by Eurostat and national institutes.",
         },
         "year_over_year_change": {
             "name": "Year-over-Year Volatility Check",
@@ -248,6 +287,7 @@ def calculate_quality_scorecard(
     observations: list[dict[str, Any]],
     findings: list[dict[str, Any]],
     min_year: int = 1995,
+    known_missing_periods: dict[int, str] | list[int] | set[int] | None = None,
 ) -> dict[str, Any]:
     """Calculate ISO 25012 / DAMA data quality dimension scores and composite grade."""
     total_obs = len(observations)
@@ -263,8 +303,16 @@ def calculate_quality_scorecard(
             "warning_count": 0,
         }
 
-    # 1. Completeness: active series coverage (>= min_year)
-    active_obs = [o for o in observations if int(o["period"]) >= min_year]
+    # 1. Completeness: active series coverage (>= min_year) excluding documented structural gaps
+    known_gaps = (
+        set(known_missing_periods.keys())
+        if isinstance(known_missing_periods, dict)
+        else set(known_missing_periods or [])
+    )
+    active_obs = [
+        o for o in observations
+        if int(o["period"]) >= min_year and int(o["period"]) not in known_gaps
+    ]
     if active_obs:
         numeric_active = sum(1 for o in active_obs if o.get("value") is not None)
         completeness = round((numeric_active / len(active_obs)) * 100.0, 1)
@@ -376,11 +424,11 @@ def generate_markdown_audit_report(
 
     report = f"""# Official Data Quality Audit Report: Greece Public Statistics
 
-**Series:** {series_name}  
-**Audit Run ID:** #{run_id}  
-**Audit Timestamp:** {checked_at} UTC  
-**Overall Surveillance Status:** {status}  
-**Data Quality Score:** {scorecard.get('overall_score', 0)}/100 (Grade: {scorecard.get('grade', 'N/A')})  
+**Series:** {series_name}
+**Audit Run ID:** #{run_id}
+**Audit Timestamp:** {checked_at} UTC
+**Overall Surveillance Status:** {status}
+**Data Quality Score:** {scorecard.get('overall_score', 0)}/100 (Grade: {scorecard.get('grade', 'N/A')})
 
 ---
 
@@ -422,3 +470,434 @@ This audit report was automatically compiled by the Greek Public Data Quality Mo
 """
     return report
 
+
+def sync_all_indicators(
+    database_url: str,
+    indicators: list[Any] | None = None,
+    timeout: int = 30,
+) -> dict[str, Any]:
+    """Ingest all configured catalog indicators independently.
+
+    An error for one indicator must not hide other stored indicators.
+    """
+    from .catalog import INDICATOR_CATALOG
+    from .ingestion import fetch_eurostat_series, fetch_indicator_benchmarks
+    from .quality import inspect
+    from .store import get_latest_observations, save_country_benchmarks, save_run
+
+    target_indicators = indicators or INDICATOR_CATALOG
+    results: list[dict[str, Any]] = []
+    success_count = 0
+    fail_count = 0
+
+    for ind in target_indicators:
+        ind_id = getattr(ind, "indicator_id", "")
+        series_id = getattr(ind, "series_id", "")
+        name = getattr(ind, "name", ind_id)
+        start_year = getattr(ind, "start_year", 1995)
+        threshold = getattr(ind, "yoy_threshold", 30.0)
+        change_metric = getattr(ind, "change_metric", "relative_percent")
+        known_missing = getattr(ind, "known_missing_periods", {})
+
+        try:
+            previous_obs = get_latest_observations(database_url, series_id)
+            fetched_obs = fetch_eurostat_series(ind, timeout=timeout)
+            findings = inspect(
+                fetched_obs,
+                threshold_pct=threshold,
+                previous_observations=previous_obs,
+                min_year=start_year,
+                change_metric=change_metric,
+                known_missing_periods=known_missing,
+            )
+            run_id = save_run(
+                database_url=database_url,
+                observations=fetched_obs,
+                findings=findings,
+                series_id=series_id,
+            )
+
+            # Ingest multi-country benchmark if applicable
+            benchmarks_count = 0
+            if getattr(ind, "comparable_eu", False) and getattr(ind, "context_series_key", ""):
+                try:
+                    benchmarks = fetch_indicator_benchmarks(ind, timeout=timeout)
+                    if benchmarks:
+                        benchmarks_count = save_country_benchmarks(
+                            database_url, ind_id, benchmarks
+                        )
+                except Exception:
+                    pass
+
+            numeric_obs = [o for o in fetched_obs if o.value is not None]
+            latest_obs = numeric_obs[-1] if numeric_obs else None
+
+            results.append(
+                {
+                    "indicator_id": ind_id,
+                    "series_id": series_id,
+                    "name": name,
+                    "status": "SUCCESS",
+                    "run_id": run_id,
+                    "observation_count": len(fetched_obs),
+                    "latest_period": latest_obs.period if latest_obs else None,
+                    "latest_value": latest_obs.value if latest_obs else None,
+                    "benchmarks_count": benchmarks_count,
+                    "error_message": None,
+                }
+            )
+            success_count += 1
+        except Exception as exc:
+            results.append(
+                {
+                    "indicator_id": ind_id,
+                    "series_id": series_id,
+                    "name": name,
+                    "status": "ERROR",
+                    "run_id": None,
+                    "observation_count": 0,
+                    "latest_period": None,
+                    "latest_value": None,
+                    "benchmarks_count": 0,
+                    "error_message": str(exc),
+                }
+            )
+            fail_count += 1
+
+    return {
+        "total": len(target_indicators),
+        "success": success_count,
+        "failed": fail_count,
+        "details": results,
+    }
+
+
+def get_overview_kpis(database_url: str, headline_only: bool = False) -> list[dict[str, Any]]:
+    """Retrieve the latest observations and summary statistics for indicators across topics.
+
+    If headline_only is True, filters to primary headline metrics.
+    Otherwise returns all indicators in the catalog.
+    """
+    from .catalog import INDICATOR_CATALOG
+    from .store import get_latest_observations
+
+    kpis: list[dict[str, Any]] = []
+
+    # Headline indicators representing each core topic
+    headline_ids = {
+        "gdp_nominal",
+        "unemployment_rate",
+        "inflation_rate",
+        "public_debt_pct",
+        "population",
+        "renewable_energy_share",
+        "house_price_index",
+        "tourist_arrivals",
+        "bond_yield_10y",
+    }
+
+    for ind in INDICATOR_CATALOG:
+        is_headline = ind.indicator_id in headline_ids
+        if headline_only and not is_headline:
+            continue
+
+        obs = get_latest_observations(database_url, ind.series_id)
+        valid_obs = [o for o in obs if o.value is not None]
+
+        latest = valid_obs[-1] if valid_obs else None
+        prev = valid_obs[-2] if len(valid_obs) >= 2 else None
+
+        yoy_pct: float | None = None
+        yoy_abs: float | None = None
+        if latest and prev and prev.value is not None and prev.value != 0:
+            yoy_abs = latest.value - prev.value
+            yoy_pct = (yoy_abs / abs(prev.value)) * 100.0
+
+        formatted_val = format_indicator_value(
+            latest.value if latest else None,
+            unit=ind.unit,
+            unit_short=ind.unit_short,
+        )
+
+        kpis.append(
+            {
+                "indicator_id": ind.indicator_id,
+                "series_id": ind.series_id,
+                "name": ind.name,
+                "topic": ind.topic,
+                "topic_icon": ind.topic_icon,
+                "unit": ind.unit,
+                "unit_short": ind.unit_short,
+                "is_headline": is_headline,
+                "latest_period": latest.period if latest else None,
+                "latest_value": latest.value if latest else None,
+                "formatted_value": formatted_val,
+                "source_status": latest.source_status if latest else None,
+                "prev_period": prev.period if prev else None,
+                "prev_value": prev.value if prev else None,
+                "yoy_change_pct": round(yoy_pct, 2) if yoy_pct is not None else None,
+                "yoy_change_abs": round(yoy_abs, 2) if yoy_abs is not None else None,
+                "source_name": ind.source_name,
+                "retrieved_at": latest.retrieved_at if latest else None,
+                "has_data": latest is not None,
+                "observation_count": len(valid_obs),
+            }
+        )
+
+    return kpis
+
+
+def get_what_changed_summary(database_url: str) -> list[dict[str, Any]]:
+    """Synthesize a plain-language summary of important changes since the previous period."""
+    kpis = get_overview_kpis(database_url, headline_only=False)
+    changes: list[dict[str, Any]] = []
+
+    for k in kpis:
+        if not k["has_data"] or k["yoy_change_pct"] is None:
+            continue
+
+        pct = k["yoy_change_pct"]
+        period = k["latest_period"]
+        prev_p = k["prev_period"]
+        name = k["name"]
+        icon = k["topic_icon"]
+        val_str = k["formatted_value"]
+
+        # Plain language assessment
+        if abs(pct) >= 15.0:
+            impact = "High Shift"
+            badge = "WARN"
+        elif abs(pct) >= 5.0:
+            impact = "Moderate Move"
+            badge = "INFO"
+        else:
+            impact = "Stable Trend"
+            badge = "PASS"
+
+        direction = "increased" if pct > 0 else "decreased"
+        sign = "+" if pct > 0 else ""
+
+        narrative = (
+            f"{name} reached {val_str} in {period}, having {direction} by {sign}{pct:.1f}% "
+            f"compared to {prev_p}."
+        )
+
+        changes.append(
+            {
+                "topic": k["topic"],
+                "topic_icon": icon,
+                "indicator": name,
+                "period": period,
+                "change_pct": pct,
+                "impact": impact,
+                "badge": badge,
+                "narrative": narrative,
+            }
+        )
+
+    return sorted(changes, key=lambda c: abs(c["change_pct"]), reverse=True)
+
+
+def calculate_indicator_correlation_matrix(
+    database_url: str,
+    indicator_ids: list[str] | None = None,
+    min_periods: int = 5,
+) -> dict[str, Any]:
+    """Calculate the pairwise Pearson correlation matrix across time-series indicators."""
+    from .catalog import INDICATOR_CATALOG
+    from .store import get_latest_observations
+
+    selected_catalog = [
+        ind for ind in INDICATOR_CATALOG
+        if indicator_ids is None or ind.indicator_id in indicator_ids
+    ]
+
+    series_map: dict[str, dict[int, float]] = {}
+    label_map: dict[str, str] = {}
+
+    for ind in selected_catalog:
+        obs = get_latest_observations(database_url, ind.series_id)
+        valid = {int(o.period): float(o.value) for o in obs if o.value is not None}
+        if len(valid) >= min_periods:
+            series_map[ind.indicator_id] = valid
+            label_map[ind.indicator_id] = f"{ind.topic_icon} {ind.name}"
+
+    if len(series_map) < 2:
+        return {
+            "indicators": list(series_map.keys()),
+            "labels": [label_map[k] for k in series_map],
+            "correlation_matrix": [],
+            "common_periods_count": 0,
+        }
+
+    # Build overlapping dataframe
+    import pandas as pd
+    df = pd.DataFrame(series_map).dropna()
+    if len(df) < min_periods:
+        # Fall back to pairwise correlation with min_periods
+        df_all = pd.DataFrame(series_map)
+        corr_df = df_all.corr(method="pearson", min_periods=min_periods).round(3)
+    else:
+        corr_df = df.corr(method="pearson").round(3)
+
+    return {
+        "indicators": list(corr_df.columns),
+        "labels": [label_map.get(col, col) for col in corr_df.columns],
+        "correlation_matrix": corr_df.fillna(0.0).values.tolist(),
+        "common_periods_count": len(df),
+    }
+
+
+def calculate_safe_comparison(
+    obs_a: list[dict[str, Any]],
+    meta_a: dict[str, Any],
+    obs_b: list[dict[str, Any]],
+    meta_b: dict[str, Any],
+    base_year: int | None = None,
+) -> dict[str, Any]:
+    """Ensure indicators are compared safely without distorting raw unit scales.
+
+    If units are identical, comparison proceeds on raw scale.
+    If units differ, series are indexed (Base Year = 100) to compare growth dynamics.
+    Detects zero, near-zero (<1e-6), missing, or non-finite base values before calculating an indexed series.
+    Returns clear structured findings and disables indexing without silently changing the base period.
+    """
+    import math
+
+    unit_a = meta_a.get("unit_short", meta_a.get("unit", ""))
+    unit_b = meta_b.get("unit_short", meta_b.get("unit", ""))
+    name_a = meta_a.get("name", "Series A")
+    name_b = meta_b.get("name", "Series B")
+
+    dict_a = {int(o["period"]): o.get("value") for o in obs_a if "period" in o}
+    dict_b = {int(o["period"]): o.get("value") for o in obs_b if "period" in o}
+
+    common_periods = sorted(set(dict_a.keys()) & set(dict_b.keys()))
+    if not common_periods:
+        return {
+            "compatible_raw": False,
+            "requires_indexing": True,
+            "indexing_disabled": True,
+            "error_explanation": "No overlapping time periods found between the selected indicators.",
+            "common_periods": [],
+            "data": [],
+            "message": "No overlapping time periods found between the selected indicators.",
+        }
+
+    compatible_raw = (unit_a == unit_b) and bool(unit_a)
+    base_period = base_year if base_year is not None else common_periods[0]
+
+    base_val_a = dict_a.get(base_period)
+    base_val_b = dict_b.get(base_period)
+
+    def _check_invalid_base(val: Any) -> str | None:
+        if val is None:
+            return "missing (null)"
+        try:
+            f = float(val)
+            if math.isnan(f):
+                return "non-finite (NaN)"
+            if math.isinf(f):
+                return "non-finite (Inf)"
+            if abs(f) < 1e-6:
+                if abs(f) == 0.0:
+                    return "zero (0.0)"
+                return f"near-zero ({f:.2e})"
+            return None
+        except (ValueError, TypeError):
+            return "non-numeric"
+
+    inv_a = _check_invalid_base(base_val_a)
+    inv_b = _check_invalid_base(base_val_b)
+    base_in_common = base_period in common_periods
+
+    indexing_possible = (not inv_a) and (not inv_b) and base_in_common
+
+    comparison_data: list[dict[str, Any]] = []
+    for p in common_periods:
+        val_a = dict_a[p]
+        val_b = dict_b[p]
+
+        idx_a: float | None = None
+        idx_b: float | None = None
+        if indexing_possible and base_val_a is not None and base_val_b is not None:
+            if val_a is not None:
+                try:
+                    idx_a = round((float(val_a) / float(base_val_a)) * 100.0, 2)
+                except (ZeroDivisionError, ValueError):
+                    idx_a = None
+            if val_b is not None:
+                try:
+                    idx_b = round((float(val_b) / float(base_val_b)) * 100.0, 2)
+                except (ZeroDivisionError, ValueError):
+                    idx_b = None
+
+        comparison_data.append(
+            {
+                "period": p,
+                "raw_a": val_a,
+                "raw_b": val_b,
+                "index_a": idx_a,
+                "index_b": idx_b,
+            }
+        )
+
+    if compatible_raw:
+        return {
+            "compatible_raw": True,
+            "requires_indexing": False,
+            "indexing_disabled": False,
+            "error_explanation": None,
+            "unit_a": unit_a,
+            "unit_b": unit_b,
+            "name_a": name_a,
+            "name_b": name_b,
+            "base_period": base_period,
+            "common_periods": common_periods,
+            "data": comparison_data,
+            "message": "Matching units allow direct raw-value comparison.",
+        }
+
+    if not indexing_possible:
+        reasons: list[str] = []
+        if not base_in_common:
+            reasons.append(f"base year {base_period} is not available in both series")
+        if inv_a:
+            reasons.append(f"base period {base_period} value for '{name_a}' is {inv_a}")
+        if inv_b:
+            reasons.append(f"base period {base_period} value for '{name_b}' is {inv_b}")
+        reason_msg = "; ".join(reasons)
+
+        return {
+            "compatible_raw": False,
+            "requires_indexing": True,
+            "indexing_disabled": True,
+            "error_explanation": reason_msg,
+            "unit_a": unit_a,
+            "unit_b": unit_b,
+            "name_a": name_a,
+            "name_b": name_b,
+            "base_period": base_period,
+            "common_periods": common_periods,
+            "data": comparison_data,
+            "message": (
+                f"Different units ({unit_a} vs {unit_b}) require re-indexing, but base period {base_period} "
+                f"cannot be used as a 100 baseline: {reason_msg}. "
+                "Indexed comparison is disabled to avoid mathematical distortion or division by zero without silently altering the base period."
+            ),
+        }
+
+    return {
+        "compatible_raw": False,
+        "requires_indexing": True,
+        "indexing_disabled": False,
+        "error_explanation": None,
+        "unit_a": unit_a,
+        "unit_b": unit_b,
+        "name_a": name_a,
+        "name_b": name_b,
+        "base_period": base_period,
+        "common_periods": common_periods,
+        "data": comparison_data,
+        "message": f"Different units ({unit_a} vs {unit_b}). Both series have been re-indexed (Base {base_period} = 100) to safely compare relative trajectories.",
+    }

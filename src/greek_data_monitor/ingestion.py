@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 from datetime import datetime, timezone
 import io
+import random
 import re
+import time
 from dataclasses import dataclass, field
 
 import requests
@@ -47,10 +49,21 @@ def parse_tsv(
         retrieved_at
         or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     )
-    dataset_name = series.dataset if series else "nama_10_gdp"
-    default_unit = series.unit if series else "CP_MEUR"
-    default_dimensions = dict(series.dimensions) if series else {}
-    resolved_source_url = source_url or (series.source_url if series else "")
+    dataset_name = (
+        getattr(series, "dataset", None)
+        or getattr(series, "dataset_code", None)
+        or "nama_10_gdp"
+        if series
+        else "nama_10_gdp"
+    )
+    default_unit = getattr(series, "unit", "CP_MEUR") if series else "CP_MEUR"
+    default_dimensions = dict(getattr(series, "dimensions", {})) if series else {}
+    resolved_source_url = source_url or (
+        getattr(series, "api_url", None)
+        or getattr(series, "source_url", "")
+        if series
+        else ""
+    )
 
     rows = list(csv.reader(io.StringIO(payload), delimiter="\t"))
     if not rows:
@@ -163,28 +176,225 @@ def _parse_cell(raw_cell: str) -> tuple[float | None, str | None, str]:
         return None, status or None, raw_str
 
 
-def fetch_eurostat_series(
-    series: SeriesConfig = DEFAULT_SERIES,
+COUNTRY_NAMES: dict[str, str] = {
+    "EL": "Greece",
+    "EU27_2020": "European Union (EU-27)",
+    "DE": "Germany",
+    "IT": "Italy",
+    "ES": "Spain",
+    "PT": "Portugal",
+    "CY": "Cyprus",
+    "FR": "France",
+}
+
+COUNTRY_FLAGS: dict[str, str] = {
+    "EL": "🇬🇷",
+    "EU27_2020": "🇪🇺",
+    "DE": "🇩🇪",
+    "IT": "🇮🇹",
+    "ES": "🇪🇸",
+    "PT": "🇵🇹",
+    "CY": "🇨🇾",
+    "FR": "🇫🇷",
+}
+
+
+def parse_multi_country_tsv(
+    payload: str,
+    indicator_id: str = "",
+    retrieved_at: str | None = None,
+) -> list[dict[str, Any]]:
+    """Parse Eurostat multi-country TSV into structured country benchmark records."""
+    if not payload or not payload.strip():
+        raise IngestionError("Eurostat returned an empty response")
+
+    retrieved_ts = (
+        retrieved_at
+        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    )
+    rows = list(csv.reader(io.StringIO(payload), delimiter="\t"))
+    if not rows:
+        raise IngestionError("Eurostat returned an empty response")
+
+    header = rows[0]
+    if not header or not any(cell.strip() for cell in header):
+        raise IngestionError("Eurostat response missing table header")
+
+    col_years: list[int] = []
+    for col in header[1:]:
+        m = re.search(r"\b(\d{4})\b", col.strip())
+        col_years.append(int(m.group(1)) if m else -1)
+
+    benchmarks: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        if not row or not any(cell.strip() for cell in row):
+            continue
+        first_cell = row[0].strip()
+        geo_code = first_cell.split(",")[-1].strip() if "," in first_cell else first_cell
+        country_name = COUNTRY_NAMES.get(geo_code, geo_code)
+
+        for year, raw_cell in zip(col_years, row[1:]):
+            if year < 1900:
+                continue
+            val, status, _ = _parse_cell(raw_cell)
+            benchmarks.append(
+                {
+                    "indicator_id": indicator_id,
+                    "country_code": geo_code,
+                    "country_name": country_name,
+                    "period": year,
+                    "value": val,
+                    "source_status": status,
+                    "fetched_at": retrieved_ts,
+                }
+            )
+
+    return benchmarks
+
+
+RETRIABLE_STATUS_CODES = {429, 502, 503, 504}
+
+
+def parse_retry_after(header_val: str | None) -> float | None:
+    """Parse HTTP Retry-After header into seconds (integer seconds or date format)."""
+    if not header_val or not header_val.strip():
+        return None
+    header_val = header_val.strip()
+    try:
+        sec = float(header_val)
+        return max(0.0, min(sec, 60.0))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        target_dt = parsedate_to_datetime(header_val)
+        now_dt = datetime.now(timezone.utc)
+        diff = (target_dt - now_dt).total_seconds()
+        return max(0.0, min(diff, 60.0))
+    except Exception:
+        return None
+
+
+def http_get_with_retries(
+    url: str,
     timeout: int = 30,
-) -> list[Observation]:
-    """Fetch Eurostat series over HTTP with timeout and error handling."""
-    url = series.source_url
+    max_retries: int = 3,
+    backoff_factor: float = 0.5,
+    headers: dict[str, str] | None = None,
+    sleeper: Any = time.sleep,
+) -> requests.Response:
+    """Execute HTTP GET with bounded exponential backoff, jitter, and Retry-After support.
+
+    Retries on:
+    - Transient network timeouts and connection resets
+    - HTTP 429 (Rate Limited), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout)
+
+    Non-retriable:
+    - HTTP 400, 404, and other permanent client status codes return immediately without retrying.
+    """
+    req_headers = {"User-Agent": "GreekPublicDataQualityMonitor/0.1.0"}
+    if headers:
+        req_headers.update(headers)
+
+    last_exc: Exception | None = None
+    response: requests.Response | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout, headers=req_headers)
+
+            if response.status_code in RETRIABLE_STATUS_CODES and attempt < max_retries:
+                retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                if retry_after is not None:
+                    delay = retry_after
+                else:
+                    delay = backoff_factor * (2 ** attempt) + random.uniform(0.0, 0.1)
+                sleeper(delay)
+                continue
+
+            return response
+
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = backoff_factor * (2 ** attempt) + random.uniform(0.0, 0.1)
+                sleeper(delay)
+                continue
+            break
+        except requests.exceptions.RequestException as exc:
+            raise IngestionError(f"Network error fetching from {url}: {exc}") from exc
+
+    if last_exc:
+        if isinstance(last_exc, requests.exceptions.Timeout):
+            raise IngestionError(
+                f"Timeout ({timeout}s) fetching from {url} after {max_retries} retries"
+            ) from last_exc
+        raise IngestionError(
+            f"Network error fetching from {url} after {max_retries} retries: {last_exc}"
+        ) from last_exc
+
+    if response is not None and response.status_code != 200:
+        preview = response.text[:200].strip()
+        raise IngestionError(
+            f"Eurostat API returned HTTP {response.status_code} ({response.reason}) after {max_retries} retries: {preview}"
+        )
+
+    raise IngestionError(f"Failed to fetch data from {url} after {max_retries} retries")
+
+
+def fetch_indicator_benchmarks(
+    indicator_def: Any,
+    timeout: int = 30,
+    max_retries: int = 3,
+    backoff_factor: float = 0.5,
+) -> list[dict[str, Any]]:
+    """Fetch comparable multi-country series from Eurostat for Greece in Context."""
+    context_key = getattr(indicator_def, "context_series_key", "")
+    dataset_code = getattr(indicator_def, "dataset_code", "")
+    indicator_id = getattr(indicator_def, "indicator_id", "")
+    if not context_key or not dataset_code:
+        return []
+
+    url = f"https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/{dataset_code}/{context_key}?format=TSV"
     retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-    try:
-        response = requests.get(
-            url,
-            timeout=timeout,
-            headers={"User-Agent": "GreekPublicDataQualityMonitor/0.1.0"},
+    response = http_get_with_retries(
+        url,
+        timeout=timeout,
+        max_retries=max_retries,
+        backoff_factor=backoff_factor,
+    )
+
+    if response.status_code != 200:
+        preview = response.text[:200].strip()
+        raise IngestionError(
+            f"Eurostat API returned HTTP {response.status_code} ({response.reason}): {preview}"
         )
-    except requests.exceptions.Timeout as exc:
-        raise IngestionError(
-            f"Timeout ({timeout}s) fetching Eurostat series from {url}"
-        ) from exc
-    except requests.exceptions.RequestException as exc:
-        raise IngestionError(
-            f"Network error fetching Eurostat series from {url}: {exc}"
-        ) from exc
+
+    return parse_multi_country_tsv(
+        response.text,
+        indicator_id=indicator_id,
+        retrieved_at=retrieved_at,
+    )
+
+
+def fetch_eurostat_series(
+    series: Any = DEFAULT_SERIES,
+    timeout: int = 30,
+    max_retries: int = 3,
+    backoff_factor: float = 0.5,
+) -> list[Observation]:
+    """Fetch Eurostat series over HTTP with resilient retries, timeout, and error handling."""
+    # Support both SeriesConfig and IndicatorDefinition
+    url = getattr(series, "api_url", None) or getattr(series, "source_url", "")
+    retrieved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    response = http_get_with_retries(
+        url,
+        timeout=timeout,
+        max_retries=max_retries,
+        backoff_factor=backoff_factor,
+    )
 
     if response.status_code != 200:
         preview = response.text[:200].strip()

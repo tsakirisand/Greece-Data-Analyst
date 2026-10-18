@@ -141,3 +141,51 @@ def test_database_url_formats(tmp_path: Path) -> None:
     db_url2 = str(tmp_path / "test2.db")
     run_id2 = save_run(db_url2, [_make_obs(2020, 100.0)], [Finding("PASS", "all", "ok")])
     assert run_id2 == 1
+
+
+def test_country_benchmarks_persistence(tmp_path: Path) -> None:
+    from greek_data_monitor.store import get_country_benchmarks, save_country_benchmarks
+
+    db_url = f"sqlite:///{tmp_path / 'benchmarks_test.db'}"
+
+    benchmarks = [
+        {"country_code": "EL", "country_name": "Greece", "period": 2022, "value": 12.5, "source_status": None},
+        {"country_code": "DE", "country_name": "Germany", "period": 2022, "value": 3.1, "source_status": None},
+        {"country_code": "EU27_2020", "country_name": "European Union (EU-27)", "period": 2022, "value": 6.1, "source_status": None},
+    ]
+
+    saved = save_country_benchmarks(db_url, "unemployment_rate", benchmarks)
+    assert saved == 3
+
+    retrieved = get_country_benchmarks(db_url, "unemployment_rate")
+    assert len(retrieved) == 3
+    el = next(r for r in retrieved if r["country_code"] == "EL")
+    assert el["country_name"] == "Greece"
+    assert el["value"] == 12.5
+
+    # Upsert with new value
+    update_bench = [
+        {"country_code": "EL", "country_name": "Greece", "period": 2022, "value": 12.4, "source_status": "b"},
+    ]
+    save_country_benchmarks(db_url, "unemployment_rate", update_bench)
+    retrieved2 = get_country_benchmarks(db_url, "unemployment_rate")
+    el2 = next(r for r in retrieved2 if r["country_code"] == "EL")
+    assert el2["value"] == 12.4
+    assert el2["source_status"] == "b"
+
+
+def test_get_all_series_status(tmp_path: Path) -> None:
+    from greek_data_monitor.store import get_all_series_status
+
+    db_url = f"sqlite:///{tmp_path / 'multi_series_test.db'}"
+    save_run(db_url, [_make_obs(2022, 100.0)], [Finding("PASS", "all", "ok")], series_id="eurostat.series.a")
+    save_run(db_url, [_make_obs(2023, 200.0)], [Finding("WARN", "yoy", "jump")], series_id="eurostat.series.b")
+
+    status_map = get_all_series_status(db_url)
+    assert len(status_map) == 2
+    assert "eurostat.series.a" in status_map
+    assert "eurostat.series.b" in status_map
+    assert status_map["eurostat.series.a"]["latest_period"] == 2022
+    assert status_map["eurostat.series.a"]["latest_value"] == 100.0
+    assert status_map["eurostat.series.b"]["latest_period"] == 2023
+    assert status_map["eurostat.series.b"]["status"] == "WARN"

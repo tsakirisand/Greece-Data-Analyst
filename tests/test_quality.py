@@ -121,3 +121,90 @@ def test_inspect_empty_series() -> None:
     assert len(findings) == 1
     assert findings[0].severity == "ERROR"
     assert findings[0].rule == "empty_series"
+
+
+def test_inspect_percentage_points_measure() -> None:
+    # Inflation moving from 0.6% to 9.3% is an 8.7 pp increase
+    obs = [
+        _make_obs(2021, 0.6),
+        _make_obs(2022, 9.3),
+    ]
+    # With threshold 5.0 pp, 8.7 pp difference triggers WARN
+    findings = inspect(obs, threshold_pct=5.0, change_metric="percentage_points")
+    yoy_findings = [f for f in findings if f.rule == "year_over_year_change"]
+    assert len(yoy_findings) == 1
+    assert yoy_findings[0].severity == "WARN"
+    assert "pp shift" in yoy_findings[0].message
+    assert yoy_findings[0].details["change_pp"] == 8.7
+    assert yoy_findings[0].details["metric"] == "percentage_points"
+
+    # Moderate change (e.g. 1.2 to 2.5 = 1.3 pp) with 5.0 pp threshold passes
+    obs_mod = [
+        _make_obs(2021, 1.2),
+        _make_obs(2022, 2.5),
+    ]
+    findings_mod = inspect(obs_mod, threshold_pct=5.0, change_metric="percentage_points")
+    assert not any(f.rule == "year_over_year_change" for f in findings_mod)
+
+
+def test_inspect_zero_and_near_zero_prior_value() -> None:
+    # When prior value is exactly 0.0 or near-zero, relative % is undefined
+    obs = [
+        _make_obs(2020, 0.0),
+        _make_obs(2021, 15.0),
+    ]
+    findings = inspect(obs, threshold_pct=30.0, change_metric="relative_percent")
+    info_findings = [f for f in findings if f.rule == "year_over_year_change"]
+    assert len(info_findings) == 1
+    assert info_findings[0].severity == "INFO"
+    assert "zero baseline" in info_findings[0].message
+    assert info_findings[0].details["change_abs"] == 15.0
+
+
+def test_inspect_negative_values_relative_percent() -> None:
+    # Prior is negative (e.g. -2.0 to -1.0)
+    obs = [
+        _make_obs(2020, -2.0),
+        _make_obs(2021, -1.0),
+    ]
+    findings = inspect(obs, threshold_pct=30.0, change_metric="relative_percent")
+    yoy_findings = [f for f in findings if f.rule == "year_over_year_change"]
+    assert len(yoy_findings) == 1
+    assert yoy_findings[0].severity == "WARN"
+    assert yoy_findings[0].details["change_pct"] == 50.0
+
+
+def test_inspect_known_missing_periods_reports_info_not_error() -> None:
+    # 2002 is a documented EU-SILC survey gap
+    known_gaps = {2002: "Official EU-SILC survey transition gap"}
+    obs = [
+        _make_obs(2001, 20.0),
+        _make_obs(2002, None),  # Documented missing year
+        _make_obs(2003, 20.7, "b"),
+        _make_obs(2021, None),  # Unexpected missing year
+    ]
+    findings = inspect(
+        obs,
+        min_year=1995,
+        known_missing_periods=known_gaps,
+    )
+
+    gap_findings = [f for f in findings if f.rule == "known_structural_gap"]
+    assert len(gap_findings) == 1
+    assert gap_findings[0].severity == "INFO"
+    assert gap_findings[0].period == 2002
+    assert "Official EU-SILC" in gap_findings[0].message
+
+    err_findings = [f for f in findings if f.rule == "not_null"]
+    assert len(err_findings) == 1
+    assert err_findings[0].severity == "ERROR"
+    assert err_findings[0].period == 2021
+
+
+def test_inspect_change_metric_disabled() -> None:
+    obs = [
+        _make_obs(2020, 10.0),
+        _make_obs(2021, 500.0),
+    ]
+    findings = inspect(obs, threshold_pct=10.0, change_metric="disabled")
+    assert not any(f.rule == "year_over_year_change" for f in findings)

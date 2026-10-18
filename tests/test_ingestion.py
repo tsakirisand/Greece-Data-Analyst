@@ -125,16 +125,18 @@ def test_fetch_eurostat_series_success(mock_get: MagicMock) -> None:
     assert mock_get.call_args[1]["timeout"] == 10
 
 
+@patch("greek_data_monitor.ingestion.time.sleep")
 @patch("greek_data_monitor.ingestion.requests.get")
-def test_fetch_eurostat_series_timeout(mock_get: MagicMock) -> None:
+def test_fetch_eurostat_series_timeout(mock_get: MagicMock, mock_sleep: MagicMock) -> None:
     mock_get.side_effect = requests.exceptions.Timeout("Connection timed out")
 
     with pytest.raises(IngestionError, match="Timeout"):
         fetch_greek_gdp(timeout=5)
 
 
+@patch("greek_data_monitor.ingestion.time.sleep")
 @patch("greek_data_monitor.ingestion.requests.get")
-def test_fetch_eurostat_series_http_error(mock_get: MagicMock) -> None:
+def test_fetch_eurostat_series_http_error(mock_get: MagicMock, mock_sleep: MagicMock) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 500
     mock_resp.reason = "Internal Server Error"
@@ -145,9 +147,123 @@ def test_fetch_eurostat_series_http_error(mock_get: MagicMock) -> None:
         fetch_greek_gdp(timeout=5)
 
 
+@patch("greek_data_monitor.ingestion.time.sleep")
 @patch("greek_data_monitor.ingestion.requests.get")
-def test_fetch_eurostat_series_network_error(mock_get: MagicMock) -> None:
+def test_fetch_eurostat_series_network_error(mock_get: MagicMock, mock_sleep: MagicMock) -> None:
     mock_get.side_effect = requests.exceptions.ConnectionError("Name resolution failed")
 
     with pytest.raises(IngestionError, match="Network error"):
         fetch_greek_gdp(timeout=5)
+
+
+def test_parse_retry_after() -> None:
+    from greek_data_monitor.ingestion import parse_retry_after
+
+    assert parse_retry_after(None) is None
+    assert parse_retry_after("") is None
+    assert parse_retry_after("15") == 15.0
+    assert parse_retry_after("2.5") == 2.5
+    # Capped at 60s
+    assert parse_retry_after("300") == 60.0
+    assert parse_retry_after("invalid_header") is None
+
+
+def test_http_get_with_retries_transient_503_recovers() -> None:
+    from greek_data_monitor.ingestion import http_get_with_retries
+
+    resp_503 = MagicMock()
+    resp_503.status_code = 503
+    resp_503.headers = {}
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.text = "success"
+
+    slept: list[float] = []
+
+    with patch("greek_data_monitor.ingestion.requests.get", side_effect=[resp_503, resp_200]) as mock_get:
+        resp = http_get_with_retries(
+            "https://example.com/api",
+            max_retries=2,
+            backoff_factor=0.1,
+            sleeper=lambda s: slept.append(s),
+        )
+        assert resp.status_code == 200
+        assert mock_get.call_count == 2
+        assert len(slept) == 1
+        assert slept[0] >= 0.1  # backoff delay applied
+
+
+def test_http_get_with_retries_respects_retry_after() -> None:
+    from greek_data_monitor.ingestion import http_get_with_retries
+
+    resp_429 = MagicMock()
+    resp_429.status_code = 429
+    resp_429.headers = {"Retry-After": "4.5"}
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+
+    slept: list[float] = []
+
+    with patch("greek_data_monitor.ingestion.requests.get", side_effect=[resp_429, resp_200]) as mock_get:
+        resp = http_get_with_retries(
+            "https://example.com/api",
+            max_retries=2,
+            sleeper=lambda s: slept.append(s),
+        )
+        assert resp.status_code == 200
+        assert mock_get.call_count == 2
+        assert len(slept) == 1
+        assert slept[0] == 4.5  # Exactly parsed Retry-After header
+
+
+def test_http_get_with_retries_permanent_404_and_400_not_retried() -> None:
+    from greek_data_monitor.ingestion import http_get_with_retries
+
+    resp_404 = MagicMock()
+    resp_404.status_code = 404
+    resp_404.headers = {}
+
+    slept: list[float] = []
+
+    with patch("greek_data_monitor.ingestion.requests.get", return_value=resp_404) as mock_get:
+        resp = http_get_with_retries(
+            "https://example.com/api",
+            max_retries=3,
+            sleeper=lambda s: slept.append(s),
+        )
+        assert resp.status_code == 404
+        # MUST NOT retry permanent client error
+        assert mock_get.call_count == 1
+        assert len(slept) == 0
+
+    resp_400 = MagicMock()
+    resp_400.status_code = 400
+    with patch("greek_data_monitor.ingestion.requests.get", return_value=resp_400) as mock_get_400:
+        resp = http_get_with_retries(
+            "https://example.com/api",
+            max_retries=3,
+            sleeper=lambda s: slept.append(s),
+        )
+        assert resp.status_code == 400
+        assert mock_get_400.call_count == 1
+        assert len(slept) == 0
+
+
+def test_http_get_with_retries_exhausted_retries_raises_ingestion_error() -> None:
+    from greek_data_monitor.ingestion import http_get_with_retries
+
+    slept: list[float] = []
+    with patch(
+        "greek_data_monitor.ingestion.requests.get",
+        side_effect=requests.exceptions.ConnectionError("Connection refused"),
+    ) as mock_get:
+        with pytest.raises(IngestionError, match="Network error .* after 2 retries"):
+            http_get_with_retries(
+                "https://example.com/api",
+                max_retries=2,
+                sleeper=lambda s: slept.append(s),
+            )
+        assert mock_get.call_count == 3
+        assert len(slept) == 2

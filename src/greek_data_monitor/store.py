@@ -41,8 +41,13 @@ def get_connection(database_url: str) -> sqlite3.Connection:
     return conn
 
 
-def init_db(connection: sqlite3.Connection) -> None:
+def init_db(connection: sqlite3.Connection | str) -> None:
     """Create schema tables and indices if not already present."""
+    if isinstance(connection, str):
+        with get_connection(connection) as conn:
+            init_db(conn)
+            return
+
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS series_metadata (
@@ -87,12 +92,26 @@ def init_db(connection: sqlite3.Connection) -> None:
             details_json TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS country_benchmarks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            indicator_id TEXT NOT NULL,
+            country_code TEXT NOT NULL,
+            country_name TEXT NOT NULL,
+            period INTEGER NOT NULL,
+            value REAL,
+            source_status TEXT,
+            fetched_at TEXT NOT NULL,
+            UNIQUE (indicator_id, country_code, period)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_observations_series_period
             ON observations(series_id, period);
         CREATE INDEX IF NOT EXISTS idx_quality_runs_series
             ON quality_runs(series_id, checked_at);
         CREATE INDEX IF NOT EXISTS idx_quality_findings_run
             ON quality_findings(run_id);
+        CREATE INDEX IF NOT EXISTS idx_country_benchmarks_ind_period
+            ON country_benchmarks(indicator_id, period);
         """
     )
 
@@ -345,5 +364,131 @@ def get_run_details(database_url: str, run_id: int) -> dict[str, Any] | None:
                 ],
                 "observations": [dict(o) for o in obs_rows],
             }
+    finally:
+        conn.close()
+
+
+def save_country_benchmarks(
+    database_url: str,
+    indicator_id: str,
+    benchmarks: list[dict[str, Any]],
+) -> int:
+    """Persist or update multi-country comparative benchmark observations."""
+    if not benchmarks:
+        return 0
+
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            rows = [
+                (
+                    indicator_id,
+                    b["country_code"],
+                    b.get("country_name", b["country_code"]),
+                    int(b["period"]),
+                    b.get("value"),
+                    b.get("source_status"),
+                    b.get("fetched_at", datetime.now(timezone.utc).isoformat()),
+                )
+                for b in benchmarks
+            ]
+            conn.executemany(
+                """
+                INSERT INTO country_benchmarks (indicator_id, country_code, country_name, period, value, source_status, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(indicator_id, country_code, period) DO UPDATE SET
+                    value = excluded.value,
+                    source_status = excluded.source_status,
+                    country_name = excluded.country_name,
+                    fetched_at = excluded.fetched_at
+                """,
+                rows,
+            )
+            return len(rows)
+    finally:
+        conn.close()
+
+
+def get_country_benchmarks(
+    database_url: str,
+    indicator_id: str,
+) -> list[dict[str, Any]]:
+    """Retrieve stored benchmark observations across countries for a specific indicator."""
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            rows = conn.execute(
+                """
+                SELECT indicator_id, country_code, country_name, period, value, source_status, fetched_at
+                FROM country_benchmarks
+                WHERE indicator_id = ?
+                ORDER BY country_code ASC, period ASC
+                """,
+                (indicator_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_all_series_status(
+    database_url: str,
+) -> dict[str, dict[str, Any]]:
+    """Get latest run status and observation metadata for every series in the database."""
+    conn = get_connection(database_url)
+    try:
+        with conn:
+            init_db(conn)
+            # Find the latest run_id per series_id
+            rows = conn.execute(
+                """
+                SELECT qr.id as run_id, qr.series_id, qr.checked_at, qr.observation_count,
+                       qr.status, qr.error_count, qr.warning_count, qr.source_url,
+                       sm.dataset, sm.unit, sm.dimensions_json
+                FROM quality_runs qr
+                JOIN (
+                    SELECT series_id, MAX(id) as max_id
+                    FROM quality_runs
+                    GROUP BY series_id
+                ) latest ON qr.id = latest.max_id
+                LEFT JOIN series_metadata sm ON qr.series_id = sm.series_id
+                ORDER BY qr.checked_at DESC
+                """
+            ).fetchall()
+
+            result: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                sid = r["series_id"]
+                # Also find latest valid period and observation for this run
+                latest_obs_row = conn.execute(
+                    """
+                    SELECT period, value, source_status, fetched_at
+                    FROM observations
+                    WHERE run_id = ? AND value IS NOT NULL
+                    ORDER BY period DESC
+                    LIMIT 1
+                    """,
+                    (r["run_id"],),
+                ).fetchone()
+
+                result[sid] = {
+                    "run_id": r["run_id"],
+                    "series_id": sid,
+                    "checked_at": r["checked_at"],
+                    "observation_count": r["observation_count"],
+                    "status": r["status"],
+                    "error_count": r["error_count"],
+                    "warning_count": r["warning_count"],
+                    "source_url": r["source_url"],
+                    "dataset": r["dataset"] or "",
+                    "unit": r["unit"] or "",
+                    "dimensions": json.loads(r["dimensions_json"]) if r["dimensions_json"] else {},
+                    "latest_period": latest_obs_row["period"] if latest_obs_row else None,
+                    "latest_value": latest_obs_row["value"] if latest_obs_row else None,
+                    "latest_status": latest_obs_row["source_status"] if latest_obs_row else None,
+                }
+            return result
     finally:
         conn.close()

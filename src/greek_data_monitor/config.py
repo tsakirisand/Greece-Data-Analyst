@@ -20,6 +20,12 @@ class Settings:
         if os.getenv("GDM_MIN_YEAR") != "none"
         else None
     )
+    max_retries: int = field(
+        default_factory=lambda: int(os.getenv("GDM_MAX_RETRIES", "3"))
+    )
+    backoff_factor: float = field(
+        default_factory=lambda: float(os.getenv("GDM_BACKOFF_FACTOR", "0.5"))
+    )
 
 
 @dataclass(frozen=True)
@@ -62,10 +68,25 @@ REAL_GDP_SERIES = SeriesConfig(
     source_url="https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/nama_10_gdp/A.CLV20_MEUR.B1GQ.EL?format=TSV",
 )
 
+from .catalog import INDICATOR_CATALOG, IndicatorDefinition
+
 AVAILABLE_SERIES: dict[str, SeriesConfig] = {
     "Nominal GDP (Current Prices - CP_MEUR)": DEFAULT_SERIES,
     "Real GDP (Chain-Linked Volumes 2020 - CLV20_MEUR)": REAL_GDP_SERIES,
 }
+
+# Dynamically populate all catalog indicators
+for _ind in INDICATOR_CATALOG:
+    _key = f"{_ind.topic_icon} {_ind.name} ({_ind.unit_short})"
+    if _key not in AVAILABLE_SERIES:
+        AVAILABLE_SERIES[_key] = SeriesConfig(
+            series_id=_ind.series_id,
+            dataset=_ind.dataset_code,
+            dimensions=_ind.dimensions,
+            unit=_ind.unit,
+            description=_ind.description,
+            source_url=_ind.api_url,
+        )
 
 # Retain backward-compatible references for external callers
 EUROSTAT_URL = DEFAULT_SERIES.source_url
