@@ -8,6 +8,11 @@ Every displayed number comes from a documented official source (Eurostat, ELSTAT
 
 ---
 
+## 🚀 Live Demo
+
+- **Deployed Dashboard**: [https://greek-public-data-quality-monitor.streamlit.app](https://greek-public-data-quality-monitor.streamlit.app)
+
+---
 ## 🎯 Project Overview
 
 Greek Public Data Quality Monitor is an end-to-end public-data monitoring and analytics platform built around a strict numerical truth principle.
