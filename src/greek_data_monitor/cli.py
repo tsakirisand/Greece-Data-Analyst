@@ -21,7 +21,7 @@ def format_finding_line(finding: Finding) -> str:
 
 def catalog_command(args: argparse.Namespace) -> int:
     """Print the central indicator catalog and documented sources."""
-    print("Greek Public Data Quality Monitor — Multi-Topic Indicator Catalog")
+    print("Greece Data Analyst — Multi-Topic Indicator Catalog")
     print(f"Total Configured Indicators: {len(INDICATOR_CATALOG)}")
     print()
     header = f"{'Topic':<22} {'Indicator Name':<38} {'Unit':<20} {'Source'}"
@@ -58,7 +58,7 @@ def run_command(args: argparse.Namespace) -> int:
 
     # Check if user requested all indicators
     if getattr(args, "all", False):
-        print("Greek Public Data Quality Monitor — Syncing All Catalog Indicators")
+        print("Greece Data Analyst — Syncing All Catalog Indicators")
         print(f"Database: {db_url}")
         print(f"Total Indicators: {len(INDICATOR_CATALOG)}")
         print("=" * 70)
@@ -150,7 +150,7 @@ def run_command(args: argparse.Namespace) -> int:
 
     run_status = "FAIL" if error_count > 0 else ("WARN" if warn_count > 0 else "PASS")
 
-    print(f"Greek Public Data Quality Monitor — Run #{run_id}")
+    print(f"Greece Data Analyst — Run #{run_id}")
     print(f"Status: {run_status} ({error_count} error(s), {warn_count} warning(s))")
     print(f"Series: {series_name} | series_id={series_id}")
     print(
@@ -202,7 +202,7 @@ def history_command(args: argparse.Namespace) -> int:
         print("Run 'greek-data-monitor run' to record the first snapshot.")
         return 0
 
-    print("Greek Public Data Quality Monitor — Recent Quality Runs")
+    print("Greece Data Analyst — Recent Quality Runs")
     print(f"Database: {db_url}")
     print()
     header = f"{'ID':<6} {'Checked At (UTC)':<28} {'Status':<8} {'Obs':<6} {'Errors':<8} {'Warns':<8} {'Series'}"

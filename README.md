@@ -1,4 +1,4 @@
-# Greek Public Data Quality Monitor 🇬🇷
+# Greece Data Analyst 🇬🇷
 
 A production-style, multi-topic public data quality surveillance platform for official statistics about Greece.
 
@@ -15,7 +15,7 @@ Every displayed number comes from a documented official source (Eurostat, ELSTAT
 ---
 ## 🎯 Project Overview
 
-Greek Public Data Quality Monitor is an end-to-end public-data monitoring and analytics platform built around a strict numerical truth principle.
+Greece Data Analyst is an end-to-end public-data monitoring and analytics platform built around a strict numerical truth principle.
 
 It ingests official statistical series, validates them against known quality rules, stores historical snapshots, and exposes them through an interactive Streamlit dashboard for exploration and audit reporting.
 

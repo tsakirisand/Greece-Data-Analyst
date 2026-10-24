@@ -36,7 +36,7 @@ def test_cli_run_pass(mock_fetch: MagicMock, tmp_path: Path, capsys: pytest.Capt
     # Should exit cleanly (status 0)
     main(["run", "--db-url", db_url])
     captured = capsys.readouterr()
-    assert "Greek Public Data Quality Monitor — Run #1" in captured.out
+    assert "Greece Data Analyst — Run #1" in captured.out
     assert "PASS" in captured.out
 
 

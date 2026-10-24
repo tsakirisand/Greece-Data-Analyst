@@ -35,8 +35,8 @@ TRANSLATIONS = {
     "Fetch and validate all catalog indicators independently.": "Λήψη και ανεξάρτητος έλεγχος όλων των δεικτών του καταλόγου.",
     "Click **'🚀 Sync All Indicators'** in the sidebar to perform the initial ingestion of official data from Eurostat.": "Επιλέξτε **«🚀 Συγχρονισμός όλων των δεικτών»** από την πλαϊνή στήλη για να γίνει η αρχική λήψη επίσημων στοιχείων από τη Eurostat.",
     "Database contains no stored observations yet.": "Δεν υπάρχουν ακόμη αποθηκευμένες παρατηρήσεις στη βάση δεδομένων.",
-    "### 🇬🇷 Data Quality Monitor": "### 🇬🇷 Παρακολούθηση ποιότητας δεδομένων",
-    "Multi-Topic Official Public Data Surveillance": "Παρακολούθηση επίσημων δημόσιων δεδομένων σε πολλούς τομείς",
+    "### 🇬🇷 Greece Data Analyst": "### 🇬🇷 Αναλυτής Δεδομένων Ελλάδας",
+    "Multi-Topic Official Data Analysis for Greece": "Ανάλυση επίσημων δεδομένων της Ελλάδας σε πολλούς τομείς",
     "Multi-Topic Official Public Data Surveillance for Greece": "Παρακολούθηση επίσημων δημόσιων δεδομένων για την Ελλάδα σε πολλούς τομείς",
     "Multi-Topic Official Public Data Surveillance for Greece.": "Παρακολούθηση επίσημων δημόσιων δεδομένων για την Ελλάδα σε πολλούς τομείς.",
     "off": "Ανενεργό",
@@ -44,7 +44,7 @@ TRANSLATIONS = {
 
     # Page titles and summaries
     "<div class=\"brand-title\">🇬🇷 Greece Overview</div>": "<div class=\"brand-title\">🇬🇷 Επισκόπηση της Ελλάδας</div>",
-    "<div class=\"brand-title\">🇬🇷 Greek Public Data Quality Monitor</div>": "<div class=\"brand-title\">🇬🇷 Παρακολούθηση Ποιότητας Δημόσιων Δεδομένων Ελλάδας</div>",
+    "<div class=\"brand-title\">🇬🇷 Greece Data Analyst</div>": "<div class=\"brand-title\">🇬🇷 Αναλυτής Δεδομένων Ελλάδας</div>",
     "<div class=\"brand-title\">🔍 Data Explorer & Indicator Analysis</div>": "<div class=\"brand-title\">🔍 Εξερεύνηση δεδομένων και ανάλυση δεικτών</div>",
     "<div class=\"brand-title\">🇪🇺 Greece in Context: International Benchmarks</div>": "<div class=\"brand-title\">🇪🇺 Η Ελλάδα στο πλαίσιο διεθνών συγκρίσεων</div>",
     "<div class=\"brand-title\">🏛️ Sovereign Debt & Fiscal Surveillance</div>": "<div class=\"brand-title\">🏛️ Δημόσιο χρέος και δημοσιονομική εποπτεία</div>",

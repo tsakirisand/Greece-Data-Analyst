@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "greek-public-data-quality-monitor"
+name = "greece-data-analyst"
 version = "0.1.0"
-description = "A reproducible quality monitor for Greek public statistics"
+description = "Analysis of official public statistics about Greece"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["requests>=2.32,<3"]

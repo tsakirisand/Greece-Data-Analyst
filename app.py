@@ -67,7 +67,7 @@ from greek_data_monitor.store import (
 )
 
 st.set_page_config(
-    page_title="Greek Public Data Quality Monitor",
+    page_title="Greece Data Analyst",
     page_icon="🇬🇷",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -211,8 +211,8 @@ settings = Settings()
 # ---------------------------------------------------------
 # Sidebar: Navigation & Controls
 # ---------------------------------------------------------
-st.sidebar.markdown("### 🇬🇷 Data Quality Monitor")
-st.sidebar.caption("Multi-Topic Official Public Data Surveillance")
+st.sidebar.markdown("### 🇬🇷 Greece Data Analyst")
+st.sidebar.caption("Multi-Topic Official Data Analysis for Greece")
 
 # Surveillance, analysis, and interpretation pages
 page = st.sidebar.radio(
@@ -253,7 +253,7 @@ if st.sidebar.button("🚀 Sync All Indicators (19)", type="primary", use_contai
 all_status = get_all_series_status(db_url)
 if not all_status:
     # If database is fresh/empty, provide clear onboarding banner
-    st.markdown('<div class="brand-title">🇬🇷 Greek Public Data Quality Monitor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-title">🇬🇷 Greece Data Analyst</div>', unsafe_allow_html=True)
     st.markdown('<div class="brand-subtitle">Genuinely multi-topic public data surveillance for Greece</div>', unsafe_allow_html=True)
     st.warning("Database contains no stored observations yet.")
     st.info("Click **'🚀 Sync All Indicators'** in the sidebar to perform the initial ingestion of official data from Eurostat.")
