@@ -1657,43 +1657,32 @@ elif page == "📈 Greece: Progress & Challenges":
 
     date_cols = st.columns(2)
     with date_cols[0]:
-        start_date = st.date_input(
-            "Ημερομηνία έναρξης" if greek_language else "Start date",
-            value=date(year_options[-2], 1, 1),
-            min_value=date(year_options[0], 1, 1),
-            max_value=date(year_options[-1], 12, 31),
-            key="assessment_start_date",
+        year_from = st.selectbox(
+            "Έτος έναρξης" if greek_language else "Start year",
+            options=year_options,
+            index=max(0, len(year_options) - 2),
+            key="assessment_start_year",
         )
     with date_cols[1]:
-        end_date = st.date_input(
-            "Ημερομηνία λήξης" if greek_language else "End date",
-            value=date(year_options[-1], 12, 31),
-            min_value=date(year_options[0], 1, 1),
-            max_value=date(year_options[-1], 12, 31),
-            key="assessment_end_date",
+        year_to = st.selectbox(
+            "Έτος λήξης" if greek_language else "End year",
+            options=year_options,
+            index=len(year_options) - 1,
+            key="assessment_end_year",
         )
 
-    if end_date <= start_date:
+    if year_to <= year_from:
         st.warning(
-            "Η ημερομηνία λήξης πρέπει να είναι μετά την ημερομηνία έναρξης."
+            "Το έτος λήξης πρέπει να είναι μετά το έτος έναρξης."
             if greek_language
-            else "End date must be after start date."
-        )
-        st.stop()
-
-    year_from, year_to = start_date.year, end_date.year
-    if year_from == year_to:
-        st.warning(
-            "Τα στοιχεία είναι ετήσια· επιλέξτε ημερομηνίες σε διαφορετικά έτη για σύγκριση."
-            if greek_language
-            else "The data is annual; choose dates in different years to compare indicators."
+            else "End year must be later than start year."
         )
         st.stop()
 
     st.caption(
-        "Τα στοιχεία είναι ετήσια, επομένως συγκρίνονται τα έτη των ημερομηνιών και όχι οι επιμέρους ημέρες."
+        "Τα στοιχεία είναι ετήσια· επιλέξτε έτος έναρξης και έτος λήξης για τη σύγκριση."
         if greek_language
-        else "The data is annual, so the selected years are compared; individual days are not available."
+        else "The data is annual. Choose a start year and end year for the comparison."
     )
     st.caption(
         (
