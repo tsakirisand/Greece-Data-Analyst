@@ -10,7 +10,7 @@ Every displayed number comes from a documented official source (Eurostat, ELSTAT
 
 ## 🚀 Live Demo
 
-- **Deployed Dashboard**: [https://greek-public-data-quality-monitor.streamlit.app](https://greek-public-data-quality-monitor.streamlit.app)
+- **Deployed Dashboard**: [https://greece-data-analyst.streamlit.app](https://greece-data-analyst.streamlit.app)
 
 ---
 ## 🎯 Project Overview
