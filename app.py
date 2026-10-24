@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from math import isfinite
 import sys
 from pathlib import Path
 from typing import Any
@@ -1577,13 +1578,34 @@ elif page == "📈 Greece: Progress & Challenges":
         unsafe_allow_html=True,
     )
 
+    histories = {
+        ind.indicator_id: get_latest_observations(db_url, ind.series_id)
+        for ind in INDICATOR_CATALOG
+    }
+    year_options = sorted(
+        {
+            observation.period
+            for observations in histories.values()
+            for observation in observations
+            if observation.value is not None and isfinite(observation.value)
+        }
+    )
+    if len(year_options) < 2:
+        st.warning("At least two years of stored observations are needed for a comparison. Sync the indicators, then try again.")
+        st.stop()
+
+    year_from, year_to = st.select_slider(
+        "Choose a custom comparison period",
+        options=year_options,
+        value=(year_options[-2], year_options[-1]),
+        format_func=str,
+        help="The indicators are annual. The assessment compares the selected start and end years where both observations are available.",
+    )
     st.caption(
-        "Assessment uses the latest stored observation versus the previous consecutive year for each series. "
-        "The publication years can differ by indicator. These are signs of progress or pressure, not proof "
-        "that a particular event or policy caused the change."
+        f"Comparing {year_from} with {year_to}. The publication years can differ by indicator, and not every series has data in every year. "
+        "These are signs of progress or pressure, not proof that a particular event or policy caused the change."
     )
 
-    all_kpis_for_reading = get_overview_kpis(db_url, headline_only=False)
     catalog_by_id = {ind.indicator_id: ind for ind in INDICATOR_CATALOG}
 
     # For these indicators, a particular direction is usually a favorable signal.
@@ -1632,49 +1654,58 @@ elif page == "📈 Greece: Progress & Challenges":
             return f"€{value / 1_000:,.1f}B"
         return format_indicator_value(value, ind.unit, ind.unit_short)
 
-    for item in all_kpis_for_reading:
-        ind = catalog_by_id[item["indicator_id"]]
-        latest = item["latest_value"]
-        previous = item["prev_value"]
-        delta = item["change_value"]
-        has_consecutive_pair = (
-            latest is not None
-            and previous is not None
-            and item["latest_period"] is not None
-            and item["prev_period"] is not None
-            and item["latest_period"] == item["prev_period"] + 1
-        )
-        direction = "up" if latest is not None and previous is not None and latest > previous else "down"
+    for indicator_id, observations in histories.items():
+        ind = catalog_by_id[indicator_id]
+        by_period = {
+            observation.period: observation.value
+            for observation in observations
+            if observation.value is not None and isfinite(observation.value)
+        }
+        start_value = by_period.get(year_from)
+        end_value = by_period.get(year_to)
+        has_comparison = start_value is not None and end_value is not None
+        delta = None
+        change_display = "Change unavailable"
+        if has_comparison and ind.change_metric != "disabled":
+            difference = end_value - start_value
+            if ind.change_metric == "percentage_points":
+                delta = difference
+                change_display = f"{difference:+.2f} pp"
+            elif abs(start_value) >= 1e-6:
+                delta = difference / abs(start_value) * 100
+                change_display = f"{delta:+.2f}%"
+
+        direction = "up" if has_comparison and end_value > start_value else "down"
         is_stable = (
-            has_consecutive_pair
+            has_comparison
             and delta is not None
-            and abs(delta) < (0.01 if item["change_unit"] == "pp" else 0.1)
+            and abs(delta) < (0.01 if ind.change_metric == "percentage_points" else 0.1)
         )
-        if not item["has_data"] or not has_consecutive_pair or delta is None:
+        if not has_comparison or delta is None:
             category = "Mixed or unclear"
-            trend = "Not enough consecutive data"
+            trend = "Missing data for selected years" if not has_comparison else "Change unavailable"
         elif is_stable:
             category = "Mixed or unclear"
-            trend = f"Broadly stable ({item['change_display']})"
+            trend = f"Broadly stable ({change_display})"
         elif ind.indicator_id in favorable_direction:
             expected = favorable_direction[ind.indicator_id]
             category = "Improving" if direction == expected else "Needs attention"
-            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
+            trend = f"{'↑' if direction == 'up' else '↓'} {change_display}"
         elif ind.indicator_id in pressure_direction:
             expected = pressure_direction[ind.indicator_id]
             category = "Needs attention" if direction == expected else "Mixed or unclear"
-            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
+            trend = f"{'↑' if direction == 'up' else '↓'} {change_display}"
         else:
             category = "Mixed or unclear"
-            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
+            trend = f"{'↑' if direction == 'up' else '↓'} {change_display}"
 
         grouped[category].append(
             {
                 "indicator": ind,
-                "latest": latest,
-                "previous": previous,
-                "latest_period": item["latest_period"],
-                "previous_period": item["prev_period"],
+                "start_value": start_value,
+                "end_value": end_value,
+                "year_from": year_from,
+                "year_to": year_to,
                 "trend": trend,
                 "explanation": interpretation.get(ind.indicator_id, ind.description),
             }
@@ -1694,14 +1725,14 @@ elif page == "📈 Greece: Progress & Challenges":
             return
         for entry in items:
             ind = entry["indicator"]
-            latest_text = readable_value(ind, entry["latest"])
-            previous_text = readable_value(ind, entry["previous"])
+            start_text = readable_value(ind, entry["start_value"])
+            end_text = readable_value(ind, entry["end_value"])
             cols = st.columns([2.1, 1, 1, 3])
             cols[0].markdown(f"**{ind.topic_icon} {ind.name}**  \n{entry['trend']}")
-            cols[1].caption(f"Latest · {entry['latest_period'] or '—'}")
-            cols[1].write(latest_text)
-            cols[2].caption(f"Previous · {entry['previous_period'] or '—'}")
-            cols[2].write(previous_text)
+            cols[1].caption(f"Start · {entry['year_from']}")
+            cols[1].write(start_text)
+            cols[2].caption(f"End · {entry['year_to']}")
+            cols[2].write(end_text)
             cols[3].write(entry["explanation"])
 
     render_assessment(grouped["Improving"], "No clearly positive consecutive-year movements are available yet.")
