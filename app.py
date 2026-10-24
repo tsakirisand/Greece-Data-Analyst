@@ -214,7 +214,7 @@ page = st.sidebar.radio(
         "🔬 Cross-Series Analysis & Lab",
         "🛡️ Data Quality & Freshness",
         "📑 Audit Reports & Data Export",
-        "🧭 How to Read the Numbers",
+        "📈 Greece: Progress & Challenges",
         "ℹ️ Sources & Methodology",
     ],
     index=0,
@@ -1568,61 +1568,70 @@ print("Header columns:", header)
 
 
 # ==============================================================================
-# PAGE 8: 🧭 HOW TO READ THE NUMBERS
+# PAGE 8: 📈 GREECE: PROGRESS & CHALLENGES
 # ==============================================================================
-elif page == "🧭 How to Read the Numbers":
-    st.markdown('<div class="brand-title">🧭 How to Read Greece’s Numbers</div>', unsafe_allow_html=True)
+elif page == "📈 Greece: Progress & Challenges":
+    st.markdown('<div class="brand-title">📈 Greece: Progress & Challenges</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="brand-subtitle">A plain-language guide to units, recent direction, and what each movement can—and cannot—tell you.</div>',
+        '<div class="brand-subtitle">A balanced snapshot of where Greece is improving, where pressures remain, and which signals need context.</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("### Start with the unit")
-    st.markdown(
-        "Each indicator uses the unit shown beside its name. **€M means million euros**: "
-        "€230,000 M equals **€230 billion** (divide a value in €M by 1,000 to get € billions). "
-        "Nominal GDP is measured at the prices of each year, so it can rise because output grew, "
-        "prices rose, or both. Real GDP uses chain-linked 2020 prices to account for price changes."
-    )
-    st.markdown(
-        "For rates such as inflation, unemployment, public debt, and renewable energy share, "
-        "a change like **+0.4 pp** means 0.4 percentage points. A movement from 10% to 10.4% "
-        "is +0.4 pp (a 4% relative increase). These are different ways of describing change."
-    )
-
-    st.markdown("### What is moving?")
     st.caption(
-        "The table compares the latest stored observation with the previous consecutive year. "
-        "It describes direction, not the cause. Official data can be revised, and different indicators "
-        "are released on different schedules."
+        "Assessment uses the latest stored observation versus the previous consecutive year for each series. "
+        "The publication years can differ by indicator. These are signs of progress or pressure, not proof "
+        "that a particular event or policy caused the change."
     )
-    st.caption("GDP values in this table are shown in € billions (the source series is in € millions); other indicators use their catalog units.")
-
-    direction_notes = {
-        "gdp_nominal": "Higher nominal output may reflect more production, higher prices, or both; use real GDP to assess inflation-adjusted output.",
-        "gdp_real": "Higher real GDP means inflation-adjusted output increased; it does not show how gains are shared across people.",
-        "inflation_rate": "Higher inflation means prices are rising faster. Lower inflation means slower price increases, not necessarily falling prices.",
-        "unemployment_rate": "A lower rate usually means a larger share of the active population is employed; it does not show job quality or participation by itself.",
-        "public_debt_pct": "A lower debt-to-GDP ratio means debt is smaller relative to annual output; the ratio can fall even while the debt stock rises.",
-        "trade_exports": "Rising exports indicate more exported goods and services in current euros; price changes can affect the value.",
-        "trade_imports": "Rising imports indicate more imported goods and services in current euros; this alone is not a measure of economic health.",
-        "population": "A higher population count means more residents on 1 January; migration and natural change both contribute.",
-        "life_expectancy": "A higher estimate indicates longer expected lifespan under that year's mortality conditions; it is a population-level measure.",
-        "poverty_rate": "A lower rate means fewer people are below the relative-income threshold; it does not measure all forms of hardship.",
-        "immigration_flow": "A higher inflow means more people immigrated during the year; it does not show net migration without emigration too.",
-        "emigration_flow": "A higher outflow means more people emigrated during the year; it does not show net migration without immigration too.",
-        "renewable_energy_share": "A higher share means renewables account for a larger part of gross final energy use.",
-        "ghg_emissions": "Lower emissions indicate less reported greenhouse gas output in the covered measure; check scope and revisions.",
-        "energy_consumption": "A lower total means less final energy used; weather, economic activity, and efficiency can all affect it.",
-        "tourist_arrivals": "More arrivals mean more recorded tourist arrivals at covered accommodation; arrivals are not the same as unique visitors or spending.",
-        "tourist_nights": "More nights mean a higher number of recorded overnight stays; this can change with visitor counts and length of stay.",
-        "house_price_index": "A higher index means nominal house prices are above the 2015 baseline by more; it is not adjusted for inflation.",
-        "bond_yield_10y": "A higher yield means new borrowing benchmarks carry a higher market rate; it is not the same as the interest rate on all existing debt.",
-    }
 
     all_kpis_for_reading = get_overview_kpis(db_url, headline_only=False)
     catalog_by_id = {ind.indicator_id: ind for ind in INDICATOR_CATALOG}
-    read_rows = []
+
+    # For these indicators, a particular direction is usually a favorable signal.
+    favorable_direction = {
+        "gdp_real": "up",
+        "unemployment_rate": "down",
+        "inflation_rate": "down",
+        "public_debt_pct": "down",
+        "life_expectancy": "up",
+        "poverty_rate": "down",
+        "renewable_energy_share": "up",
+        "ghg_emissions": "down",
+        "bond_yield_10y": "down",
+    }
+    # A rise in house prices can increase affordability pressure. A fall is
+    # ambiguous without information about incomes, rents, supply, and housing investment.
+    pressure_direction = {"house_price_index": "up"}
+    interpretation = {
+        "gdp_nominal": "Nominal GDP includes price increases. Check real GDP before treating a rise as more output.",
+        "gdp_real": "Inflation-adjusted output rose; this is a broad growth signal, not a measure of how growth is shared.",
+        "inflation_rate": "A lower rate means prices are rising more slowly; it does not mean the overall price level fell.",
+        "unemployment_rate": "A lower rate is usually positive for work opportunities, though it does not describe wages or job quality.",
+        "public_debt_pct": "The debt ratio compares debt with GDP. It can fall even if the total debt stock grows.",
+        "trade_exports": "Export values are in current euros, so prices as well as quantities can move them.",
+        "trade_imports": "Imports support consumption and production; a rise or fall alone is not a verdict on economic health.",
+        "population": "Population change reflects births, deaths, and migration; the direction alone is not inherently good or bad.",
+        "life_expectancy": "A rise is a positive population health signal, but it does not describe health inequalities.",
+        "poverty_rate": "A lower relative-poverty rate is positive, but it does not capture every form of hardship.",
+        "immigration_flow": "Interpret alongside emigration and population data; this is an inflow count, not net migration.",
+        "emigration_flow": "Interpret alongside immigration and population data; this is an outflow count, not net migration.",
+        "renewable_energy_share": "A rising share indicates renewables account for more gross final energy use.",
+        "ghg_emissions": "Lower emissions are positive for climate progress; check coverage and revisions when comparing years.",
+        "energy_consumption": "Changes can reflect efficiency, weather, or economic activity, so neither direction is automatically better.",
+        "tourist_arrivals": "More arrivals can support tourism activity but can also add pressure to housing, infrastructure, and local services.",
+        "tourist_nights": "More overnight stays can support tourism activity; consider seasonal concentration and local capacity too.",
+        "house_price_index": "Rising nominal prices can make housing less affordable; falling prices also need context on incomes and supply.",
+        "bond_yield_10y": "A lower benchmark yield can ease the cost of new borrowing; it does not reset interest on all existing debt.",
+    }
+
+    grouped = {"Improving": [], "Needs attention": [], "Mixed or unclear": []}
+
+    def readable_value(ind: IndicatorDefinition, value: float | None) -> str:
+        if value is None:
+            return "—"
+        if ind.indicator_id in {"gdp_nominal", "gdp_real"}:
+            return f"€{value / 1_000:,.1f}B"
+        return format_indicator_value(value, ind.unit, ind.unit_short)
+
     for item in all_kpis_for_reading:
         ind = catalog_by_id[item["indicator_id"]]
         latest = item["latest_value"]
@@ -1635,40 +1644,78 @@ elif page == "🧭 How to Read the Numbers":
             and item["prev_period"] is not None
             and item["latest_period"] == item["prev_period"] + 1
         )
-        if not item["has_data"]:
-            trend = "No stored data"
-        elif not has_consecutive_pair or delta is None:
-            trend = "Change unavailable"
-        elif abs(delta) < (0.01 if item["change_unit"] == "pp" else 0.1):
-            trend = "→ Broadly stable"
-        elif delta > 0:
-            trend = f"↑ Up ({item['change_display']})"
+        direction = "up" if latest is not None and previous is not None and latest > previous else "down"
+        is_stable = (
+            has_consecutive_pair
+            and delta is not None
+            and abs(delta) < (0.01 if item["change_unit"] == "pp" else 0.1)
+        )
+        if not item["has_data"] or not has_consecutive_pair or delta is None:
+            category = "Mixed or unclear"
+            trend = "Not enough consecutive data"
+        elif is_stable:
+            category = "Mixed or unclear"
+            trend = f"Broadly stable ({item['change_display']})"
+        elif ind.indicator_id in favorable_direction:
+            expected = favorable_direction[ind.indicator_id]
+            category = "Improving" if direction == expected else "Needs attention"
+            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
+        elif ind.indicator_id in pressure_direction:
+            expected = pressure_direction[ind.indicator_id]
+            category = "Needs attention" if direction == expected else "Mixed or unclear"
+            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
         else:
-            trend = f"↓ Down ({item['change_display']})"
+            category = "Mixed or unclear"
+            trend = f"{'↑' if direction == 'up' else '↓'} {item['change_display']}"
 
-        def readable_value(value: float | None) -> str:
-            if value is None:
-                return "—"
-            if ind.indicator_id in {"gdp_nominal", "gdp_real"}:
-                return f"€{value / 1_000:,.1f}B"
-            return format_indicator_value(value, ind.unit, ind.unit_short)
-
-        read_rows.append(
+        grouped[category].append(
             {
-                "Topic": f"{ind.topic_icon} {ind.topic}",
-                "Indicator": ind.name,
-                "Latest": f"{readable_value(latest)} ({item['latest_period']})" if item["has_data"] else "No data",
-                "Previous year": f"{readable_value(previous)} ({item['prev_period']})" if previous is not None else "—",
-                "Direction": trend,
-                "How to interpret it": direction_notes.get(ind.indicator_id, ind.description),
+                "indicator": ind,
+                "latest": latest,
+                "previous": previous,
+                "latest_period": item["latest_period"],
+                "previous_period": item["prev_period"],
+                "trend": trend,
+                "explanation": interpretation.get(ind.indicator_id, ind.description),
             }
         )
 
-    st.dataframe(pd.DataFrame(read_rows), use_container_width=True, hide_index=True)
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("Improving signals", len(grouped["Improving"]))
+    summary_cols[1].metric("Needs attention", len(grouped["Needs attention"]))
+    summary_cols[2].metric("Mixed / limited evidence", len(grouped["Mixed or unclear"]))
+
+    st.markdown("### 🟢 Areas moving in a positive direction")
+    st.caption("These indicators moved in a direction that is generally favorable for the measure shown.")
+
+    def render_assessment(items: list[dict[str, Any]], empty_message: str) -> None:
+        if not items:
+            st.caption(empty_message)
+            return
+        for entry in items:
+            ind = entry["indicator"]
+            latest_text = readable_value(ind, entry["latest"])
+            previous_text = readable_value(ind, entry["previous"])
+            cols = st.columns([2.1, 1, 1, 3])
+            cols[0].markdown(f"**{ind.topic_icon} {ind.name}**  \n{entry['trend']}")
+            cols[1].caption(f"Latest · {entry['latest_period'] or '—'}")
+            cols[1].write(latest_text)
+            cols[2].caption(f"Previous · {entry['previous_period'] or '—'}")
+            cols[2].write(previous_text)
+            cols[3].write(entry["explanation"])
+
+    render_assessment(grouped["Improving"], "No clearly positive consecutive-year movements are available yet.")
+    st.markdown("### 🟠 Areas under pressure")
+    st.caption("These indicators moved in a direction that can signal a worsening outcome for the measure shown.")
+    render_assessment(grouped["Needs attention"], "No clear worsening consecutive-year movements are available in the stored data.")
+    st.markdown("### ⚖️ Mixed signals or limited evidence")
+    st.caption("These indicators need extra context, were broadly stable, or do not yet have consecutive-year data.")
+    render_assessment(grouped["Mixed or unclear"], "No indicators in this group.")
+
     st.info(
-        "**Why did it go up or down?** This page shows what changed, not what caused it. "
-        "Several forces can move an indicator at once; consult the source and methodology notes "
-        "before attributing a change to a particular event or policy."
+        "This is a directional snapshot, not an overall grade for Greece. It does not identify causes, "
+        "and a favorable movement in one measure does not cancel out pressure in another. Open "
+        "**Sources & Methodology** to review definitions, sources, and limitations."
     )
 
 
