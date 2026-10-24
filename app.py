@@ -54,6 +54,7 @@ from greek_data_monitor.ingestion import (
     fetch_eurostat_series,
     fetch_indicator_benchmarks,
 )
+from greek_data_monitor.i18n import configure_language, translate_text
 from greek_data_monitor.quality import inspect
 from greek_data_monitor.store import (
     get_all_series_status,
@@ -71,6 +72,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+language_choice = st.sidebar.selectbox(
+    "Language / Γλώσσα",
+    ["English", "Ελληνικά"],
+    key="app_language",
+)
+greek_language = language_choice == "Ελληνικά"
+configure_language(greek_language)
 
 # Custom Accessible Dark-Themed CSS styling
 st.markdown(
@@ -220,6 +229,7 @@ page = st.sidebar.radio(
         "ℹ️ Sources & Methodology",
     ],
     index=0,
+    format_func=translate_text,
 )
 
 st.sidebar.markdown("---")
@@ -1573,7 +1583,6 @@ print("Header columns:", header)
 # PAGE 8: 📈 GREECE: PROGRESS & CHALLENGES
 # ==============================================================================
 elif page == "📈 Greece: Progress & Challenges":
-    greek_language = st.selectbox("Language / Γλώσσα", ["English", "Ελληνικά"], key="assessment_language") == "Ελληνικά"
     title = "📈 Η πορεία της Ελλάδας: πρόοδος και προκλήσεις" if greek_language else "📈 Greece: Progress & Challenges"
     subtitle = (
         "Ισορροπημένη εικόνα για τους τομείς όπου η Ελλάδα βελτιώνεται, όπου υπάρχουν πιέσεις και όπου χρειάζεται προσεκτική ερμηνεία."
