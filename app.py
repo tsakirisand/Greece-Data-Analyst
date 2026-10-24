@@ -1572,11 +1572,58 @@ print("Header columns:", header)
 # PAGE 8: 📈 GREECE: PROGRESS & CHALLENGES
 # ==============================================================================
 elif page == "📈 Greece: Progress & Challenges":
-    st.markdown('<div class="brand-title">📈 Greece: Progress & Challenges</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="brand-subtitle">A balanced snapshot of where Greece is improving, where pressures remain, and which signals need context.</div>',
-        unsafe_allow_html=True,
+    greek_language = st.selectbox("Language / Γλώσσα", ["English", "Ελληνικά"], key="assessment_language") == "Ελληνικά"
+    title = "📈 Η πορεία της Ελλάδας: πρόοδος και προκλήσεις" if greek_language else "📈 Greece: Progress & Challenges"
+    subtitle = (
+        "Ισορροπημένη εικόνα για τους τομείς όπου η Ελλάδα βελτιώνεται, όπου υπάρχουν πιέσεις και όπου χρειάζεται προσεκτική ερμηνεία."
+        if greek_language
+        else "A balanced snapshot of where Greece is improving, where pressures remain, and which signals need context."
     )
+    st.markdown(f'<div class="brand-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="brand-subtitle">{subtitle}</div>', unsafe_allow_html=True)
+
+    indicator_names_el = {
+        "gdp_nominal": "Ακαθάριστο Εγχώριο Προϊόν (ονομαστικό)",
+        "gdp_real": "Ακαθάριστο Εγχώριο Προϊόν (πραγματικό)",
+        "inflation_rate": "Πληθωρισμός (ΕνΔΤΚ)",
+        "unemployment_rate": "Ποσοστό ανεργίας",
+        "public_debt_pct": "Δημόσιο χρέος (% ΑΕΠ)",
+        "trade_exports": "Εξαγωγές αγαθών και υπηρεσιών",
+        "trade_imports": "Εισαγωγές αγαθών και υπηρεσιών",
+        "population": "Πληθυσμός",
+        "life_expectancy": "Προσδόκιμο ζωής κατά τη γέννηση",
+        "poverty_rate": "Κίνδυνος φτώχειας",
+        "immigration_flow": "Ετήσια εισερχόμενη μετανάστευση",
+        "emigration_flow": "Ετήσια εξερχόμενη μετανάστευση",
+        "renewable_energy_share": "Μερίδιο ανανεώσιμης ενέργειας",
+        "ghg_emissions": "Εκπομπές αερίων του θερμοκηπίου",
+        "energy_consumption": "Τελική κατανάλωση ενέργειας",
+        "tourist_arrivals": "Τουριστικές αφίξεις",
+        "tourist_nights": "Διανυκτερεύσεις τουριστών",
+        "house_price_index": "Δείκτης τιμών κατοικιών",
+        "bond_yield_10y": "Απόδοση 10ετούς κρατικού ομολόγου",
+    }
+    interpretation_el = {
+        "gdp_nominal": "Το ονομαστικό ΑΕΠ περιλαμβάνει τις αυξήσεις τιμών. Για την πραγματική αύξηση της παραγωγής εξετάστε και το πραγματικό ΑΕΠ.",
+        "gdp_real": "Η παραγωγή αυξήθηκε μετά την προσαρμογή για τις μεταβολές τιμών· αυτό δεν δείχνει πώς κατανέμεται η ανάπτυξη.",
+        "inflation_rate": "Χαμηλότερος πληθωρισμός σημαίνει βραδύτερη αύξηση τιμών, όχι απαραίτητα πτώση του γενικού επιπέδου τιμών.",
+        "unemployment_rate": "Η μείωση της ανεργίας είναι συνήθως θετική, αλλά ο δείκτης δεν περιγράφει μισθούς ή ποιότητα εργασίας.",
+        "public_debt_pct": "Ο λόγος χρέους προς ΑΕΠ μπορεί να μειωθεί ακόμη κι αν αυξάνεται το συνολικό δημόσιο χρέος.",
+        "trade_exports": "Οι εξαγωγές μετρώνται σε τρέχουσες τιμές, οπότε επηρεάζονται και από τις τιμές και από τις ποσότητες.",
+        "trade_imports": "Οι εισαγωγές στηρίζουν κατανάλωση και παραγωγή· η αύξηση ή μείωσή τους από μόνη της δεν δείχνει οικονομική υγεία.",
+        "population": "Η πληθυσμιακή μεταβολή επηρεάζεται από γεννήσεις, θανάτους και μετανάστευση· η κατεύθυνσή της δεν είναι από μόνη της θετική ή αρνητική.",
+        "life_expectancy": "Η αύξηση είναι θετική ένδειξη για την υγεία του πληθυσμού, αλλά δεν αποτυπώνει τις ανισότητες στην υγεία.",
+        "poverty_rate": "Η μείωση του σχετικού κινδύνου φτώχειας είναι θετική, αλλά δεν καλύπτει κάθε μορφή οικονομικής δυσκολίας.",
+        "immigration_flow": "Εξετάστε τον δείκτη μαζί με την εξερχόμενη μετανάστευση· είναι εισροή και όχι καθαρή μετανάστευση.",
+        "emigration_flow": "Εξετάστε τον δείκτη μαζί με την εισερχόμενη μετανάστευση· είναι εκροή και όχι καθαρή μετανάστευση.",
+        "renewable_energy_share": "Η αύξηση δείχνει ότι οι ανανεώσιμες πηγές καλύπτουν μεγαλύτερο μερίδιο της τελικής ενεργειακής κατανάλωσης.",
+        "ghg_emissions": "Οι χαμηλότερες εκπομπές είναι θετική ένδειξη για την κλιματική πρόοδο· ελέγξτε την κάλυψη και τις αναθεωρήσεις.",
+        "energy_consumption": "Η μεταβολή μπορεί να οφείλεται σε αποδοτικότητα, καιρό ή οικονομική δραστηριότητα· καμία κατεύθυνση δεν είναι πάντα καλύτερη.",
+        "tourist_arrivals": "Οι περισσότερες αφίξεις μπορούν να ενισχύσουν τον τουρισμό, αλλά και να πιέσουν κατοικίες, υποδομές και υπηρεσίες.",
+        "tourist_nights": "Οι περισσότερες διανυκτερεύσεις στηρίζουν την τουριστική δραστηριότητα· έχει σημασία και η εποχικότητα και η τοπική χωρητικότητα.",
+        "house_price_index": "Η άνοδος των ονομαστικών τιμών μπορεί να δυσκολεύει την προσιτή στέγαση· και η πτώση χρειάζεται πλαίσιο εισοδημάτων και προσφοράς.",
+        "bond_yield_10y": "Η χαμηλότερη απόδοση μπορεί να μειώσει το κόστος νέου δανεισμού· δεν αλλάζει τους τόκους όλου του υφιστάμενου χρέους.",
+    }
 
     histories = {
         ind.indicator_id: get_latest_observations(db_url, ind.series_id)
@@ -1591,19 +1638,32 @@ elif page == "📈 Greece: Progress & Challenges":
         }
     )
     if len(year_options) < 2:
-        st.warning("At least two years of stored observations are needed for a comparison. Sync the indicators, then try again.")
+        st.warning(
+            "Χρειάζονται τουλάχιστον δύο έτη αποθηκευμένων στοιχείων. Κάντε συγχρονισμό των δεικτών και δοκιμάστε ξανά."
+            if greek_language
+            else "At least two years of stored observations are needed for a comparison. Sync the indicators, then try again."
+        )
         st.stop()
 
     year_from, year_to = st.select_slider(
-        "Choose a custom comparison period",
+        "Επιλέξτε περίοδο σύγκρισης" if greek_language else "Choose a custom comparison period",
         options=year_options,
         value=(year_options[-2], year_options[-1]),
         format_func=str,
-        help="The indicators are annual. The assessment compares the selected start and end years where both observations are available.",
+        help=(
+            "Οι δείκτες είναι ετήσιοι. Η σύγκριση γίνεται μεταξύ των ετών αρχής και τέλους όπου υπάρχουν και οι δύο παρατηρήσεις."
+            if greek_language
+            else "The indicators are annual. The assessment compares the selected start and end years where both observations are available."
+        ),
     )
     st.caption(
-        f"Comparing {year_from} with {year_to}. The publication years can differ by indicator, and not every series has data in every year. "
-        "These are signs of progress or pressure, not proof that a particular event or policy caused the change."
+        (
+            f"Σύγκριση {year_from} με {year_to}. Τα διαθέσιμα έτη διαφέρουν ανά δείκτη και δεν υπάρχουν στοιχεία για κάθε έτος σε όλες τις σειρές. "
+            "Οι μεταβολές δείχνουν τάσεις, όχι ότι ένα συγκεκριμένο γεγονός ή μέτρο προκάλεσε την αλλαγή."
+            if greek_language
+            else f"Comparing {year_from} with {year_to}. The publication years can differ by indicator, and not every series has data in every year. "
+            "These are signs of progress or pressure, not proof that a particular event or policy caused the change."
+        )
     )
 
     catalog_by_id = {ind.indicator_id: ind for ind in INDICATOR_CATALOG}
@@ -1650,6 +1710,27 @@ elif page == "📈 Greece: Progress & Challenges":
     def readable_value(ind: IndicatorDefinition, value: float | None) -> str:
         if value is None:
             return "—"
+        if greek_language:
+            if ind.indicator_id in {"gdp_nominal", "gdp_real", "trade_exports", "trade_imports"}:
+                number = f"{value / 1_000:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                return f"{number} δισ. €"
+            if ind.indicator_id in {"population", "immigration_flow", "emigration_flow"}:
+                number = f"{value:,.0f}".replace(",", ".")
+                return f"{number} άτομα"
+            if ind.indicator_id == "life_expectancy":
+                return f"{value:.1f}".replace(".", ",") + " έτη"
+            if ind.indicator_id in {"tourist_arrivals", "tourist_nights"}:
+                number = f"{value:,.0f}".replace(",", ".")
+                unit = "αφίξεις" if ind.indicator_id == "tourist_arrivals" else "διανυκτερεύσεις"
+                return f"{number} {unit}"
+            if ind.indicator_id == "ghg_emissions":
+                number = f"{value:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                return f"{number} χιλ. τόνοι CO₂e"
+            if ind.indicator_id == "energy_consumption":
+                return f"{value:.2f}".replace(".", ",") + " Mtoe"
+            if ind.indicator_id == "house_price_index":
+                return f"{value:.2f}".replace(".", ",")
+            return f"{value:.2f}".replace(".", ",") + "%"
         if ind.indicator_id in {"gdp_nominal", "gdp_real"}:
             return f"€{value / 1_000:,.1f}B"
         return format_indicator_value(value, ind.unit, ind.unit_short)
@@ -1670,10 +1751,18 @@ elif page == "📈 Greece: Progress & Challenges":
             difference = end_value - start_value
             if ind.change_metric == "percentage_points":
                 delta = difference
-                change_display = f"{difference:+.2f} pp"
+                change_display = (
+                    f"{difference:+.2f} π.μ.".replace(".", ",")
+                    if greek_language
+                    else f"{difference:+.2f} pp"
+                )
             elif abs(start_value) >= 1e-6:
                 delta = difference / abs(start_value) * 100
-                change_display = f"{delta:+.2f}%"
+                change_display = (
+                    f"{delta:+.2f}%".replace(".", ",")
+                    if greek_language
+                    else f"{delta:+.2f}%"
+                )
 
         direction = "up" if has_comparison and end_value > start_value else "down"
         is_stable = (
@@ -1683,10 +1772,15 @@ elif page == "📈 Greece: Progress & Challenges":
         )
         if not has_comparison or delta is None:
             category = "Mixed or unclear"
-            trend = "Missing data for selected years" if not has_comparison else "Change unavailable"
+            trend = (
+                "Δεν υπάρχουν στοιχεία για τα επιλεγμένα έτη" if greek_language and not has_comparison
+                else "Η μεταβολή δεν υπολογίζεται" if greek_language
+                else "Missing data for selected years" if not has_comparison
+                else "Change unavailable"
+            )
         elif is_stable:
             category = "Mixed or unclear"
-            trend = f"Broadly stable ({change_display})"
+            trend = f"Σχεδόν αμετάβλητο ({change_display})" if greek_language else f"Broadly stable ({change_display})"
         elif ind.indicator_id in favorable_direction:
             expected = favorable_direction[ind.indicator_id]
             category = "Improving" if direction == expected else "Needs attention"
@@ -1707,17 +1801,17 @@ elif page == "📈 Greece: Progress & Challenges":
                 "year_from": year_from,
                 "year_to": year_to,
                 "trend": trend,
-                "explanation": interpretation.get(ind.indicator_id, ind.description),
+                "explanation": interpretation_el.get(ind.indicator_id, ind.description) if greek_language else interpretation.get(ind.indicator_id, ind.description),
             }
         )
 
     summary_cols = st.columns(3)
-    summary_cols[0].metric("Improving signals", len(grouped["Improving"]))
-    summary_cols[1].metric("Needs attention", len(grouped["Needs attention"]))
-    summary_cols[2].metric("Mixed / limited evidence", len(grouped["Mixed or unclear"]))
+    summary_cols[0].metric("Θετικές εξελίξεις" if greek_language else "Improving signals", len(grouped["Improving"]))
+    summary_cols[1].metric("Υπό πίεση" if greek_language else "Needs attention", len(grouped["Needs attention"]))
+    summary_cols[2].metric("Μικτή εικόνα / λίγα στοιχεία" if greek_language else "Mixed / limited evidence", len(grouped["Mixed or unclear"]))
 
-    st.markdown("### 🟢 Areas moving in a positive direction")
-    st.caption("These indicators moved in a direction that is generally favorable for the measure shown.")
+    st.markdown("### 🟢 Τομείς με θετική πορεία" if greek_language else "### 🟢 Areas moving in a positive direction")
+    st.caption("Οι δείκτες αυτοί κινήθηκαν προς κατεύθυνση που θεωρείται γενικά θετική για το συγκεκριμένο μέγεθος." if greek_language else "These indicators moved in a direction that is generally favorable for the measure shown.")
 
     def render_assessment(items: list[dict[str, Any]], empty_message: str) -> None:
         if not items:
@@ -1728,23 +1822,26 @@ elif page == "📈 Greece: Progress & Challenges":
             start_text = readable_value(ind, entry["start_value"])
             end_text = readable_value(ind, entry["end_value"])
             cols = st.columns([2.1, 1, 1, 3])
-            cols[0].markdown(f"**{ind.topic_icon} {ind.name}**  \n{entry['trend']}")
-            cols[1].caption(f"Start · {entry['year_from']}")
+            indicator_name = indicator_names_el.get(ind.indicator_id, ind.name) if greek_language else ind.name
+            cols[0].markdown(f"**{ind.topic_icon} {indicator_name}**  \n{entry['trend']}")
+            cols[1].caption(f"Αρχή · {entry['year_from']}" if greek_language else f"Start · {entry['year_from']}")
             cols[1].write(start_text)
-            cols[2].caption(f"End · {entry['year_to']}")
+            cols[2].caption(f"Τέλος · {entry['year_to']}" if greek_language else f"End · {entry['year_to']}")
             cols[2].write(end_text)
             cols[3].write(entry["explanation"])
 
-    render_assessment(grouped["Improving"], "No clearly positive consecutive-year movements are available yet.")
-    st.markdown("### 🟠 Areas under pressure")
-    st.caption("These indicators moved in a direction that can signal a worsening outcome for the measure shown.")
-    render_assessment(grouped["Needs attention"], "No clear worsening consecutive-year movements are available in the stored data.")
-    st.markdown("### ⚖️ Mixed signals or limited evidence")
-    st.caption("These indicators need extra context, were broadly stable, or do not yet have consecutive-year data.")
-    render_assessment(grouped["Mixed or unclear"], "No indicators in this group.")
+    render_assessment(grouped["Improving"], "Δεν υπάρχουν ακόμη σαφείς θετικές μεταβολές για την επιλεγμένη περίοδο." if greek_language else "No clearly positive movements are available for the selected period.")
+    st.markdown("### 🟠 Τομείς υπό πίεση" if greek_language else "### 🟠 Areas under pressure")
+    st.caption("Οι δείκτες αυτοί κινήθηκαν προς κατεύθυνση που μπορεί να σημαίνει επιδείνωση." if greek_language else "These indicators moved in a direction that can signal a worsening outcome for the measure shown.")
+    render_assessment(grouped["Needs attention"], "Δεν υπάρχουν σαφείς αρνητικές μεταβολές στα αποθηκευμένα στοιχεία της περιόδου." if greek_language else "No clear worsening movements are available in the stored data for this period.")
+    st.markdown("### ⚖️ Μικτά μηνύματα ή περιορισμένα στοιχεία" if greek_language else "### ⚖️ Mixed signals or limited evidence")
+    st.caption("Αυτοί οι δείκτες χρειάζονται πρόσθετο πλαίσιο, έμειναν σχεδόν σταθεροί ή δεν έχουν στοιχεία και για τα δύο έτη." if greek_language else "These indicators need extra context, were broadly stable, or do not have data for both years.")
+    render_assessment(grouped["Mixed or unclear"], "Δεν υπάρχουν δείκτες σε αυτή την κατηγορία." if greek_language else "No indicators in this group.")
 
     st.info(
-        "This is a directional snapshot, not an overall grade for Greece. It does not identify causes, "
+        "Η σελίδα δείχνει τάσεις, όχι συνολική βαθμολογία ή αιτίες. Η βελτίωση σε έναν δείκτη δεν αναιρεί τις πιέσεις σε άλλον. Δείτε τις **Πηγές και Μεθοδολογία** για ορισμούς και περιορισμούς."
+        if greek_language
+        else "This is a directional snapshot, not an overall grade for Greece. It does not identify causes, "
         "and a favorable movement in one measure does not cancel out pressure in another. Open "
         "**Sources & Methodology** to review definitions, sources, and limitations."
     )
