@@ -221,6 +221,7 @@ page = st.sidebar.radio(
         "📌 Overview",
         "🔍 Explore Data",
         "🇪🇺 Greece in Context",
+        "📈 Greece: Progress & Challenges",
         "🏛️ Sovereign Debt & Fiscal Surveillance",
         "🛡️ Data Quality & Freshness",
         "📑 Audit Reports & Data Export",
@@ -229,18 +230,6 @@ page = st.sidebar.radio(
     index=0,
     format_func=translate_text,
 )
-
-if page == "🏛️ Sovereign Debt & Fiscal Surveillance":
-    fiscal_section = st.sidebar.radio(
-        "Fiscal surveillance",
-        options=[
-            "🏛️ Sovereign Debt & Fiscal Surveillance",
-            "📈 Greece: Progress & Challenges",
-        ],
-        format_func=translate_text,
-        key="fiscal_surveillance_section",
-    )
-    page = fiscal_section
 
 st.sidebar.markdown("---")
 
