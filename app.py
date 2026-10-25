@@ -1143,11 +1143,29 @@ elif page == "🔬 Cross-Series Analysis & Lab":
                 x=ind_x.name,
                 y=ind_y.name,
                 text="Year",
-                trendline="ols",
                 title=f"{ind_x.name} vs. {ind_y.name} ({len(common_p)} Overlapping Years)",
                 color_discrete_sequence=["#38bdf8"],
             )
             fig_scatter.update_traces(textposition="top center")
+            # Plotly Express' built-in OLS trendline imports statsmodels at
+            # runtime. Fit the same least-squares line with NumPy instead so
+            # the dashboard does not depend on statsmodels being installed.
+            import numpy as np
+
+            x_values = df_biv[ind_x.name].to_numpy(dtype=float)
+            y_values = df_biv[ind_y.name].to_numpy(dtype=float)
+            slope, intercept = np.polyfit(x_values, y_values, 1)
+            line_x = np.linspace(float(x_values.min()), float(x_values.max()), 100)
+            fig_scatter.add_trace(
+                go.Scatter(
+                    x=line_x,
+                    y=slope * line_x + intercept,
+                    mode="lines",
+                    name="OLS trendline",
+                    line=dict(color="#f97316", width=2, dash="dash"),
+                    hoverinfo="skip",
+                )
+            )
             fig_scatter.update_layout(
                 template="plotly_dark",
                 paper_bgcolor="rgba(0,0,0,0)",
