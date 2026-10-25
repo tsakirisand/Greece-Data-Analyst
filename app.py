@@ -221,16 +221,26 @@ page = st.sidebar.radio(
         "📌 Overview",
         "🔍 Explore Data",
         "🇪🇺 Greece in Context",
-        "🏛️ Fiscal & Debt Surveillance",
-        "🔬 Cross-Series Analysis & Lab",
+        "🏛️ Sovereign Debt & Fiscal Surveillance",
         "🛡️ Data Quality & Freshness",
         "📑 Audit Reports & Data Export",
-        "📈 Greece: Progress & Challenges",
         "ℹ️ Sources & Methodology",
     ],
     index=0,
     format_func=translate_text,
 )
+
+if page == "🏛️ Sovereign Debt & Fiscal Surveillance":
+    fiscal_section = st.sidebar.radio(
+        "Fiscal surveillance",
+        options=[
+            "🏛️ Sovereign Debt & Fiscal Surveillance",
+            "📈 Greece: Progress & Challenges",
+        ],
+        format_func=translate_text,
+        key="fiscal_surveillance_section",
+    )
+    page = fiscal_section
 
 st.sidebar.markdown("---")
 
@@ -855,7 +865,7 @@ elif page == "🇪🇺 Greece in Context":
 # ==============================================================================
 # PAGE 4: 🏛️ FISCAL & DEBT SURVEILLANCE
 # ==============================================================================
-elif page == "🏛️ Fiscal & Debt Surveillance":
+elif page == "🏛️ Sovereign Debt & Fiscal Surveillance":
     st.markdown('<div class="brand-title">🏛️ Sovereign Debt & Fiscal Surveillance</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="brand-subtitle">Specialized surveillance of Greece\'s sovereign debt trajectory, post-pandemic deleveraging dynamics, '
@@ -1066,175 +1076,6 @@ elif page == "🏛️ Fiscal & Debt Surveillance":
         - **Post-Programme Commitments:** Enhanced post-program monitoring reports by the European Commission verify Greek debt sustainability and primary fiscal balance targets.
         """
     )
-
-
-# ==============================================================================
-# PAGE 5: 🔬 CROSS-SERIES ANALYSIS & LAB
-# ==============================================================================
-elif page == "🔬 Cross-Series Analysis & Lab":
-    st.markdown('<div class="brand-title">🔬 Cross-Series Analysis & Macroeconomic Lab</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="brand-subtitle">Empirical correlation matrices, bivariate regression modeling, and unit-scale normalized comparisons across official Greek time-series.</div>',
-        unsafe_allow_html=True,
-    )
-
-    tab_lab_corr, tab_lab_scatter, tab_lab_safe = st.tabs([
-        "🔥 Correlation Heatmap Matrix",
-        "📐 Bivariate Scatter & Trendline",
-        "⚖️ Safe Unit-Scale Comparison Lab",
-    ])
-
-    with tab_lab_corr:
-        st.markdown("### 🧮 Multi-Indicator Pearson Correlation Matrix")
-        st.caption("Measures linear co-movement between official Greek indicators across overlapping annual observation periods (min 5 periods).")
-
-        corr_res = calculate_indicator_correlation_matrix(db_url, min_periods=5)
-        if corr_res.get("correlation_matrix"):
-            corr_df = pd.DataFrame(
-                corr_res["correlation_matrix"],
-                index=corr_res["labels"],
-                columns=corr_res["labels"],
-            )
-            fig_heatmap = px.imshow(
-                corr_df,
-                text_auto=True,
-                aspect="auto",
-                color_continuous_scale="RdBu_r",
-                zmin=-1.0,
-                zmax=1.0,
-                title=f"Pairwise Pearson Correlation Matrix ({corr_res['common_periods_count']} overlapping observations)",
-            )
-            fig_heatmap.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#0f172a",
-                margin=dict(l=10, r=10, t=40, b=10),
-                height=520,
-            )
-            st.plotly_chart(fig_heatmap, use_container_width=True)
-        else:
-            st.info("Insufficient overlapping observations across indicators to construct correlation matrix. Sync all indicators first.")
-
-    with tab_lab_scatter:
-        st.markdown("### 📐 Bivariate Regression & Scatter Plot")
-        st.caption("Inspect relationships between any two public metrics (e.g. Okun's Law: GDP vs Unemployment; Phillips Curve: Inflation vs Unemployment).")
-
-        biv_cols = st.columns(2)
-        catalog_names = {f"{ind.topic_icon} {ind.name}": ind for ind in INDICATOR_CATALOG}
-        with biv_cols[0]:
-            sel_x_name = st.selectbox("Select Independent Variable (X-axis)", options=list(catalog_names.keys()), index=0)
-        with biv_cols[1]:
-            sel_y_name = st.selectbox("Select Dependent Variable (Y-axis)", options=list(catalog_names.keys()), index=1)
-
-        ind_x = catalog_names[sel_x_name]
-        ind_y = catalog_names[sel_y_name]
-
-        obs_x = get_latest_observations(db_url, ind_x.series_id)
-        obs_y = get_latest_observations(db_url, ind_y.series_id)
-
-        dict_x = {o.period: o.value for o in obs_x if o.value is not None}
-        dict_y = {o.period: o.value for o in obs_y if o.value is not None}
-        common_p = sorted(set(dict_x.keys()) & set(dict_y.keys()))
-
-        if len(common_p) >= 3:
-            df_biv = pd.DataFrame([{"Year": p, ind_x.name: dict_x[p], ind_y.name: dict_y[p]} for p in common_p])
-            fig_scatter = px.scatter(
-                df_biv,
-                x=ind_x.name,
-                y=ind_y.name,
-                text="Year",
-                title=f"{ind_x.name} vs. {ind_y.name} ({len(common_p)} Overlapping Years)",
-                color_discrete_sequence=["#38bdf8"],
-            )
-            fig_scatter.update_traces(textposition="top center")
-            # Plotly Express' built-in OLS trendline imports statsmodels at
-            # runtime. Fit the same least-squares line with NumPy instead so
-            # the dashboard does not depend on statsmodels being installed.
-            import numpy as np
-
-            x_values = df_biv[ind_x.name].to_numpy(dtype=float)
-            y_values = df_biv[ind_y.name].to_numpy(dtype=float)
-            slope, intercept = np.polyfit(x_values, y_values, 1)
-            line_x = np.linspace(float(x_values.min()), float(x_values.max()), 100)
-            fig_scatter.add_trace(
-                go.Scatter(
-                    x=line_x,
-                    y=slope * line_x + intercept,
-                    mode="lines",
-                    name="OLS trendline",
-                    line=dict(color="#f97316", width=2, dash="dash"),
-                    hoverinfo="skip",
-                )
-            )
-            fig_scatter.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#0f172a",
-                margin=dict(l=10, r=10, t=40, b=10),
-                xaxis_title=f"{ind_x.name} ({ind_x.unit_short})",
-                yaxis_title=f"{ind_y.name} ({ind_y.unit_short})",
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-            # Correlation coefficient
-            import numpy as np
-            corr_val = float(np.corrcoef(df_biv[ind_x.name], df_biv[ind_y.name])[0, 1])
-            r_squared = corr_val ** 2
-            st.markdown(
-                f"""
-                <div class="callout-box">
-                    <strong>Statistical Fit:</strong> Pearson Correlation $r = {corr_val:.3f}$ •
-                    Coefficient of Determination $R^2 = {r_squared:.3f}$ ({r_squared * 100:.1f}% of variance explained).<br>
-                    <strong>Direction:</strong> {'Positive Co-movement (variables move in the same direction)' if corr_val > 0 else 'Negative Inverse Relationship (variables move oppositely)'}.
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning("Less than 3 overlapping periods found between the selected indicators.")
-
-    with tab_lab_safe:
-        st.markdown("### ⚖️ Safe Unit-Scale Comparison Lab")
-        st.caption("Automatically detects unit compatibility and prevents misleading raw comparisons by re-indexing differing scales to Base Year = 100.")
-
-        cmp_cols = st.columns(2)
-        with cmp_cols[0]:
-            sel_safe_a = st.selectbox("Select Series A", options=list(catalog_names.keys()), index=0, key="lab_safe_a")
-        with cmp_cols[1]:
-            sel_safe_b = st.selectbox("Select Series B", options=list(catalog_names.keys()), index=2 if len(catalog_names) > 2 else 1, key="lab_safe_b")
-
-        ind_s_a = catalog_names[sel_safe_a]
-        ind_s_b = catalog_names[sel_safe_b]
-
-        obs_s_a = [{"period": o.period, "value": o.value} for o in get_latest_observations(db_url, ind_s_a.series_id)]
-        obs_s_b = [{"period": o.period, "value": o.value} for o in get_latest_observations(db_url, ind_s_b.series_id)]
-
-        meta_s_a = {"name": ind_s_a.name, "unit": ind_s_a.unit, "unit_short": ind_s_a.unit_short}
-        meta_s_b = {"name": ind_s_b.name, "unit": ind_s_b.unit, "unit_short": ind_s_b.unit_short}
-
-        res_safe = calculate_safe_comparison(obs_s_a, meta_s_a, obs_s_b, meta_s_b)
-        if res_safe.get("indexing_disabled"):
-            st.error(f"🚫 {res_safe.get('message')}")
-            if res_safe.get("error_explanation"):
-                st.caption(f"**Baseline Issue**: {res_safe['error_explanation']}")
-        elif res_safe.get("data"):
-            df_safe = pd.DataFrame(res_safe["data"])
-            if res_safe["compatible_raw"]:
-                st.success(f"✅ {res_safe['message']}")
-                fig_s = go.Figure()
-                fig_s.add_trace(go.Scatter(x=df_safe["period"], y=df_safe["raw_a"], mode="lines+markers", name=f"{ind_s_a.name} ({ind_s_a.unit_short})", line=dict(color="#38bdf8")))
-                fig_s.add_trace(go.Scatter(x=df_safe["period"], y=df_safe["raw_b"], mode="lines+markers", name=f"{ind_s_b.name} ({ind_s_b.unit_short})", line=dict(color="#fbbf24")))
-                fig_s.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#0f172a", yaxis_title=ind_s_a.unit_short, margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig_s, use_container_width=True)
-            else:
-                st.warning(f"⚠️ {res_safe['message']}")
-                fig_s = go.Figure()
-                fig_s.add_trace(go.Scatter(x=df_safe["period"], y=df_safe["index_a"], mode="lines+markers", name=f"{ind_s_a.name} (Base {res_safe['base_period']}=100)", line=dict(color="#38bdf8")))
-                fig_s.add_trace(go.Scatter(x=df_safe["period"], y=df_safe["index_b"], mode="lines+markers", name=f"{ind_s_b.name} (Base {res_safe['base_period']}=100)", line=dict(color="#fbbf24")))
-                fig_s.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#0f172a", yaxis_title="Indexed Value (Base=100)", margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig_s, use_container_width=True)
-        else:
-            st.info(res_safe.get("message", "No overlapping data available."))
 
 
 # ==============================================================================
